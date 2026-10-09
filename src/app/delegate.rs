@@ -10,18 +10,19 @@ use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSApplication, NSApplicationDelegate, NSBeep, NSControlStateValueOff, NSControlStateValueOn,
-    NSMenuItem, NSMenuItemValidation, NSStatusItem,
+    NSMenuItem, NSMenuItemValidation, NSPasteboard, NSStatusItem,
 };
-use objc2_foundation::{MainThreadMarker, NSNotification, ns_string};
+use objc2_foundation::{MainThreadMarker, NSArray, NSNotification, NSString, NSURL, ns_string};
 
-use super::status_item;
+use super::{commands, status_item};
 use crate::clipboard::{ClipboardHistory, HistoryList};
 use crate::drag::DragMonitor;
 use crate::hotkey::{Gesture, HotKey};
+use crate::ipc::{self, Request, server};
 use crate::paths;
 use crate::preferences::{PreferencesHooks, PreferencesWindow};
 use crate::settings::Settings;
-use crate::shelf::{Shelf, ShelfModel};
+use crate::shelf::{Shelf, ShelfModel, read_pasteboard};
 
 #[derive(Default)]
 pub struct Ivars {
@@ -72,6 +73,21 @@ define_class!(
                 }
             });
 
+            // One Yoinks per data folder: a second copy would fight over the
+            // same shelf, so it hands over to the first and quits.
+            if let Err(error) = server::start(server::socket_path(&data_dir)) {
+                eprintln!("yoinks: {error}");
+                if error.kind() == std::io::ErrorKind::AddrInUse {
+                    NSApplication::sharedApplication(mtm).terminate(None);
+                    return;
+                }
+            }
+            let target = Rc::clone(&shelf);
+            server::set_handler(move |request| commands::handle(&target, request));
+            // "Add to Yoinks" in the Services menu and Finder Quick Actions.
+            // SAFETY: We implement `addToYoinks:userData:error:`.
+            unsafe { NSApplication::sharedApplication(mtm).setServicesProvider(Some(self.as_ref())) };
+
             let ivars = self.ivars();
             let _ = ivars.data_dir.set(data_dir);
             *ivars.settings.borrow_mut() = settings;
@@ -86,6 +102,30 @@ define_class!(
             let _ = ivars
                 .status_item
                 .set(status_item::build(mtm, self, shortcut.as_ref()));
+        }
+
+        // Files opened with Yoinks go on the shelf (one stack); `yoinks://`
+        // links run their command.
+        #[unsafe(method(application:openURLs:))]
+        fn open_urls(&self, _app: &NSApplication, urls: &NSArray<NSURL>) {
+            let mut paths = Vec::new();
+            for url in urls.iter() {
+                if let Some(path) = url.isFileURL().then(|| url.to_file_path()).flatten() {
+                    paths.push(path);
+                    continue;
+                }
+                let link = url.absoluteString().map(|s| s.to_string()).unwrap_or_default();
+                match ipc::url::parse(&link) {
+                    Ok(request) => self.run(request),
+                    Err(error) => {
+                        eprintln!("yoinks: {error}");
+                        NSBeep();
+                    }
+                }
+            }
+            if !paths.is_empty() {
+                self.run(Request::add_paths(paths));
+            }
         }
 
         // Launching the app again (Finder, Spotlight, `open`) shows the shelf.
@@ -174,6 +214,22 @@ define_class!(
             window.show();
         }
 
+        // The "Add to Yoinks" service (see NSServices in Info.plist).
+        #[unsafe(method(addToYoinks:userData:error:))]
+        fn add_to_yoinks(
+            &self,
+            pasteboard: &NSPasteboard,
+            _user_data: Option<&NSString>,
+            _error: *mut *mut NSString,
+        ) {
+            let shelf = self.shelf();
+            if shelf.model().accept(read_pasteboard(pasteboard)) {
+                shelf.appear_at_edge();
+            } else {
+                NSBeep();
+            }
+        }
+
         #[unsafe(method(hideShelf:))]
         fn hide_shelf(&self, _sender: Option<&AnyObject>) {
             self.shelf().hide();
@@ -186,6 +242,14 @@ impl AppDelegate {
         let this = Self::alloc(mtm).set_ivars(Ivars::default());
         // SAFETY: NSObject's `init` has the correct signature.
         unsafe { msg_send![super(this), init] }
+    }
+
+    fn run(&self, request: Request) {
+        let response = server::handle(request);
+        if !response.ok {
+            eprintln!("yoinks: {}", response.error.unwrap_or_default());
+            NSBeep();
+        }
     }
 
     fn shelf(&self) -> &Rc<Shelf> {

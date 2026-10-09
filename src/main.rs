@@ -6,9 +6,11 @@
 compile_error!("yoinks only supports macOS");
 
 mod app;
+mod cli;
 mod clipboard;
 mod drag;
 mod hotkey;
+mod ipc;
 mod paths;
 mod preferences;
 mod settings;
@@ -21,7 +23,13 @@ use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 
 use app::AppDelegate;
 
-fn main() {
+fn main() -> std::process::ExitCode {
+    // `yoinks add ...` and friends run as a command line tool.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if cli::is_cli(&args) {
+        return cli::run(&args);
+    }
+
     let mtm = MainThreadMarker::new().expect("must run on the main thread");
     let app = NSApplication::sharedApplication(mtm);
     // Accessory: no Dock icon, no main menu bar takeover.
@@ -33,4 +41,5 @@ fn main() {
     app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
 
     app.run();
+    std::process::ExitCode::SUCCESS
 }

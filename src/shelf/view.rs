@@ -6,12 +6,14 @@ use std::rc::Weak;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
+use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSBeep, NSColor, NSDragOperation, NSDraggingInfo, NSEvent, NSEventType, NSLayoutAttribute,
-    NSLayoutConstraint, NSResponder, NSScrollView, NSStackView, NSTextAlignment, NSTextField,
-    NSUserInterfaceLayoutOrientation, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
-    NSVisualEffectState, NSVisualEffectView, NSWindowDelegate,
+    NSLayoutConstraint, NSMenu, NSMenuItem, NSMenuItemImportFromDeviceIdentifier, NSPasteboard,
+    NSPasteboardType, NSResponder, NSScrollView, NSStackView, NSTextAlignment, NSTextField,
+    NSUserInterfaceItemIdentification, NSUserInterfaceLayoutOrientation, NSView,
+    NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
+    NSWindowDelegate,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSEdgeInsets, NSInteger, NSObject, NSObjectProtocol, NSPoint,
@@ -26,6 +28,7 @@ use super::item::Entry;
 use super::model::ShelfModel;
 use super::pasteboard;
 use super::tile::TileView;
+use crate::ui::menu_item;
 
 const CORNER_RADIUS: f64 = 14.0;
 
@@ -117,6 +120,46 @@ define_class!(
         #[unsafe(method(acceptsFirstMouse:))]
         fn accepts_first_mouse(&self, _event: Option<&NSEvent>) -> bool {
             true
+        }
+
+        // Right-clicking the background: add the clipboard, or import a
+        // photo or scan from a nearby iPhone or iPad (Continuity Camera).
+        #[unsafe(method_id(menuForEvent:))]
+        fn menu_for_event(&self, _event: &NSEvent) -> Option<Retained<NSMenu>> {
+            // Continuity Camera looks for a receiver starting at the key
+            // window's first responder, so make that us.
+            if let Some(window) = self.window() {
+                window.makeKeyWindow();
+                window.makeFirstResponder(Some(self));
+            }
+            Some(self.background_menu())
+        }
+
+        // Continuity Camera asks the responder chain who can receive images.
+        #[unsafe(method_id(validRequestorForSendType:returnType:))]
+        fn valid_requestor(
+            &self,
+            send_type: Option<&NSPasteboardType>,
+            return_type: Option<&NSPasteboardType>,
+        ) -> Option<Retained<AnyObject>> {
+            if send_type.is_none() && return_type.is_some() {
+                // SAFETY: Every Objective-C object is an `AnyObject`.
+                Some(unsafe { Retained::cast_unchecked(self.retain()) })
+            } else {
+                // SAFETY: Calling the superclass implementation of the same method.
+                unsafe {
+                    msg_send![super(self), validRequestorForSendType: send_type, returnType: return_type]
+                }
+            }
+        }
+
+        // The photo or scan arrives here.
+        #[unsafe(method(readSelectionFromPasteboard:))]
+        fn read_selection(&self, pasteboard: &NSPasteboard) -> bool {
+            match self.ivars().model.upgrade() {
+                Some(model) => model.accept(pasteboard::read(pasteboard)),
+                None => false,
+            }
         }
     }
 
@@ -384,6 +427,29 @@ impl ShelfContentView {
             .get()
             .filter(|id| ivars.order.borrow().contains(id));
         self.apply_selection(selected);
+    }
+
+    fn background_menu(&self) -> Retained<NSMenu> {
+        let mtm = self.mtm();
+        let menu = NSMenu::new(mtm);
+        // No target: the action travels the responder chain to the app
+        // delegate.
+        menu.addItem(&menu_item(
+            mtm,
+            "Add Clipboard to Shelf",
+            sel!(addClipboard:),
+            "",
+            None,
+        ));
+        menu.addItem(&NSMenuItem::separatorItem(mtm));
+        // AppKit replaces this item with the nearby devices' "Take Photo",
+        // "Scan Documents" and "Add Sketch" commands.
+        let import = NSMenuItem::new(mtm);
+        import.setTitle(ns_string!("Import from iPhone or iPad"));
+        // SAFETY: Reading an immutable framework constant.
+        import.setIdentifier(Some(unsafe { NSMenuItemImportFromDeviceIdentifier }));
+        menu.addItem(&import);
+        menu
     }
 
     /// Selects an entry (or nothing), focuses the shelf for keyboard use and

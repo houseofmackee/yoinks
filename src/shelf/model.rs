@@ -79,6 +79,11 @@ impl ShelfModel {
         &self.view
     }
 
+    /// A copy of the shelf's entries, newest first.
+    pub fn entries(&self) -> Vec<Entry> {
+        self.store.borrow().entries().to_vec()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.store.borrow().is_empty()
     }

@@ -74,10 +74,15 @@ src/
     app_list.rs      editable app list (+ from running apps)
     form.rs          layout helpers
     storage.rs       disk usage
-  integrations/
-    cli.rs           `yoinks add <path>` via a tiny IPC socket or URL scheme
-    url_scheme.rs    yoinks://add?path=...
-    services.rs      NSServices provider ("Add to Yoinks")
+  cli.rs             `yoinks add|list|show|hide|recall|clear`
+  ipc/
+    protocol.rs      JSON request/response types
+    server.rs        Unix socket in the data folder; main-thread handler
+    client.rs        command line side of the socket
+    url.rs           yoinks:// link parsing
+  app/commands.rs    answers requests from the socket and links
+macos/Info.plist     bundle template (URL scheme, Services)
+scripts/bundle.sh    builds, signs (ad hoc) and registers Yoinks.app
   util/
 ```
 
@@ -260,23 +265,41 @@ Key design points:
 - Deferred: a "show in Dock" toggle (Yoinks has no app menu to show) and
   adjustable gesture timing.
 
-### Phase 9: Integrations
-- **CLI:** `yoinks add <paths...>`, `yoinks list`, `yoinks clear`. The binary
-  detects whether an instance is running and forwards commands over a Unix
-  socket in the Application Support folder.
-- **URL scheme:** `yoinks://add?path=...` and `yoinks://show`.
-- **Services menu / Quick Action:** "Add to Yoinks" via `NSServices` in
-  Info.plist, which also covers Automator workflows.
-- **Swift add-ons:** app extensions and App Intents cannot be built in pure
-  Rust, so they live in a small Swift package under `swift/`. They talk to the
-  Rust app through the URL scheme or the CLI socket, keeping the Swift side
-  thin. The Rust app remains the single source of truth.
-- **Share extension (Swift):** "Yoinks" in every Share menu.
-- **Shortcuts (Swift App Intents):** "Add to Shelf", "Get Shelf Items",
-  "Clear Shelf", "Show Shelf".
-- **Continuity Camera:** "Import from iPhone or iPad" in the shelf context
-  menu via `NSMenuItem.importFromDeviceIdentifier` and the
-  `NSServicesMenuRequestor` protocol.
+### Phase 9a: Integrations in Rust (done)
+- [x] `scripts/bundle.sh [debug|release]` builds `Yoinks.app` from
+  `macos/Info.plist` (LSUIElement, `yoinks://` scheme, NSServices), signs it
+  ad hoc and registers it with Launch Services. (Moved forward from
+  Phase 10, which adds icons, Developer ID signing and notarization.)
+- [x] Command line: the app binary doubles as `yoinks` (`add <files>`,
+  `add --text`, `add --url [--title]`, `list [--json]`, `show`, `hide`,
+  `recall`, `clear`, `help`). It talks to the running app over a Unix
+  socket in the data folder (mode 0600) and starts the app in the
+  background if needed. Exit codes: 0 ok, 1 failed, 2 bad usage.
+- [x] One app per data folder: a second copy quits.
+- [x] `yoinks://add?path=...&path=...`, `?text=`, `?url=&title=`,
+  `yoinks://show`, `hide`, `recall`. Links can come from any web page, so
+  nothing destructive (no `clear`).
+- [x] Files opened with Yoinks (`open -a Yoinks file`, dropping on the app
+  icon) go on the shelf as one entry.
+- [x] "Add to Yoinks" service for files, text, links and images (Services
+  menu, Finder Quick Actions).
+- [x] Shelf background menu: Add Clipboard to Shelf, and "Import from
+  iPhone or iPad" (Continuity Camera). The shelf is the receiver of the
+  photo or scan. Not verified with a device (none was available).
+
+### Phase 9b: Swift add-ons (deferred, option for later)
+- Share extension ("Yoinks" in Share menus), Shortcuts actions (App
+  Intents: Add to Shelf, Get Shelf Items, Clear Shelf, Show Shelf) and a
+  widget showing recent clips, in a small Xcode project under `swift/`
+  embedded into `Yoinks.app/Contents/PlugIns` by the bundle script.
+- They talk to the Rust app through the `yoinks://` scheme (share, intents)
+  or the socket; the widget reads a snapshot the app writes.
+- Constraints: app extensions must be sandboxed and code signed; App
+  Intents metadata needs `xcodebuild`; a widget needs an App Group shared
+  with the app, which requires a Developer ID team.
+- Decision (2026-10-10): skipped for now. Revisit once a signing team is
+  available; without one, only the Share extension and Shortcuts actions
+  could be tried, ad hoc and on one Mac.
 
 ### Phase 10: Packaging and distribution
 - `Info.plist` with `LSUIElement = true`, URL scheme, services, usage strings.
