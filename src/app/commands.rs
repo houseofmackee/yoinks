@@ -1,7 +1,7 @@
 //! Answers requests from the command line and `yoinks://` links.
 
 use crate::ipc::{EntryInfo, ItemInfo, Request, Response};
-use crate::shelf::{Content, Dropped, Entry, ItemKind, Shelf};
+use crate::shelf::{Content, Dropped, Entry, HIDE_AFTER_ADD, ItemKind, Shelf};
 
 pub fn handle(shelf: &Shelf, request: Request) -> Response {
     let model = shelf.model();
@@ -29,8 +29,10 @@ pub fn handle(shelf: &Shelf, request: Request) -> Response {
                 return Response::error("nothing to add");
             }
             // Show what was added without taking keyboard focus from the
-            // terminal or browser the request came from.
+            // terminal or browser the request came from, then slide away
+            // again if it is left alone.
             shelf.appear_at_edge();
+            shelf.arm_auto_hide(HIDE_AFTER_ADD);
         }
         Request::List => {}
         Request::Clear => model.clear(),
@@ -41,6 +43,7 @@ pub fn handle(shelf: &Shelf, request: Request) -> Response {
                 return Response::error("nothing to recall");
             }
             shelf.appear_at_edge();
+            shelf.arm_auto_hide(HIDE_AFTER_ADD);
         }
     }
     Response::ok(model.entries().iter().map(entry_info).collect())

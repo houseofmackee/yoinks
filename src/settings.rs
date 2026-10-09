@@ -26,10 +26,23 @@ pub enum AppearMode {
     AtCursor,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Where the user dragged the shelf to: the bottom-left corner of the shelf
+/// in screen coordinates.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ShelfPosition {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub shelf_edge: ShelfEdge,
+    /// Set when the user drags the shelf somewhere; it then appears there
+    /// instead of at `shelf_edge`. `null` puts it back at the edge.
+    pub shelf_position: Option<ShelfPosition>,
+    /// Slide the shelf away once it has been used and the pointer leaves it.
+    pub hide_after_use: bool,
     pub appear_on_drag: AppearMode,
     /// Show the tray icon in the menu bar. When hidden, the same menu is
     /// available from the gear button at the bottom of the shelf.
@@ -55,6 +68,8 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             shelf_edge: ShelfEdge::default(),
+            shelf_position: None,
+            hide_after_use: true,
             appear_on_drag: AppearMode::default(),
             show_menu_bar_icon: true,
             keep_after_drag_out: false,

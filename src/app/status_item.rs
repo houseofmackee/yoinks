@@ -76,6 +76,7 @@ pub fn menu(
         ("Add Clipboard to Shelf", sel!(addClipboard:)),
         ("Recall Last Dragged Item", sel!(recallItems:)),
         ("Clear Shelf", sel!(clearShelf:)),
+        ("Move Shelf Back to Edge", sel!(resetShelfPosition:)),
     ] {
         menu.addItem(&menu_item(mtm, title, action, "", target));
     }

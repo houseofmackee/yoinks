@@ -12,7 +12,9 @@ use objc2_app_kit::{
     NSApplication, NSApplicationDelegate, NSBeep, NSControlStateValueOff, NSControlStateValueOn,
     NSMenu, NSMenuItem, NSMenuItemValidation, NSPasteboard, NSStatusItem,
 };
-use objc2_foundation::{MainThreadMarker, NSArray, NSNotification, NSString, NSURL, ns_string};
+use objc2_foundation::{
+    MainThreadMarker, NSArray, NSNotification, NSPoint, NSString, NSURL, ns_string,
+};
 
 use super::{commands, status_item};
 use crate::clipboard::{ClipboardHistory, HistoryList};
@@ -22,7 +24,8 @@ use crate::ipc::{self, Request, server};
 use crate::paths;
 use crate::preferences::{PreferencesHooks, PreferencesWindow};
 use crate::settings::Settings;
-use crate::shelf::{Shelf, ShelfModel, read_pasteboard};
+use crate::settings::ShelfPosition;
+use crate::shelf::{HIDE_AFTER_ADD, Shelf, ShelfModel, read_pasteboard};
 
 #[derive(Default)]
 pub struct Ivars {
@@ -61,7 +64,9 @@ define_class!(
             let settings = Settings::load(&data_dir.join("settings.json"));
             let model = ShelfModel::new(mtm, &data_dir);
             model.set_keep_after_drag_out(settings.keep_after_drag_out);
-            let shelf = Rc::new(Shelf::new(mtm, settings.shelf_edge, model));
+            let shelf = Shelf::new(mtm, settings.shelf_edge, model);
+            shelf.set_hide_after_use(settings.hide_after_use);
+            shelf.set_custom_origin(settings.shelf_position.map(|p| NSPoint::new(p.x, p.y)));
             let drag_monitor = DragMonitor::start(Rc::clone(&shelf), &settings);
             let clipboard = ClipboardHistory::start(&data_dir, &settings);
             let target = Rc::clone(&shelf);
@@ -105,6 +110,15 @@ define_class!(
             let _ = ivars
                 .status_item
                 .set(status_item::build(mtm, self, shortcut.as_ref(), show_icon));
+            // Remember where the user drags the shelf.
+            let mover = objc2::rc::Weak::new(self);
+            self.shelf().set_on_moved(move |origin| {
+                if let Some(delegate) = mover.load() {
+                    let mut settings = delegate.ivars().settings.borrow().clone();
+                    settings.shelf_position = origin.map(|o| ShelfPosition { x: o.x, y: o.y });
+                    let _ = delegate.apply_settings(settings);
+                }
+            });
             // The same menu from the gear button at the bottom of the shelf.
             let weak = objc2::rc::Weak::new(self);
             self.shelf().set_menu(move || match weak.load() {
@@ -170,6 +184,8 @@ define_class!(
                 clipboard.is_some()
             } else if action == Some(sel!(clearShelf:)) {
                 !model.is_empty()
+            } else if action == Some(sel!(resetShelfPosition:)) {
+                self.shelf().has_custom_position()
             } else if action == Some(sel!(recallItems:)) {
                 model.can_recall()
             } else {
@@ -245,9 +261,15 @@ define_class!(
             let shelf = self.shelf();
             if shelf.model().accept(read_pasteboard(pasteboard)) {
                 shelf.appear_at_edge();
+                shelf.arm_auto_hide(HIDE_AFTER_ADD);
             } else {
                 NSBeep();
             }
+        }
+
+        #[unsafe(method(resetShelfPosition:))]
+        fn reset_shelf_position(&self, _sender: Option<&AnyObject>) {
+            self.shelf().reset_position();
         }
 
         #[unsafe(method(hideShelf:))]
@@ -312,6 +334,8 @@ impl AppDelegate {
         }
         let shelf = self.shelf();
         shelf.set_edge(settings.shelf_edge);
+        shelf.set_hide_after_use(settings.hide_after_use);
+        shelf.set_custom_origin(settings.shelf_position.map(|p| NSPoint::new(p.x, p.y)));
         shelf
             .model()
             .set_keep_after_drag_out(settings.keep_after_drag_out);
@@ -345,6 +369,14 @@ impl AppDelegate {
                 None => Ok(()),
             }
         };
+        let current = {
+            let weak = weak.clone();
+            move || {
+                weak.load()
+                    .map(|delegate| delegate.ivars().settings.borrow().clone())
+                    .unwrap_or_default()
+            }
+        };
         let suspend = move |suspended: bool| {
             if let Some(delegate) = weak.load() {
                 if suspended {
@@ -361,6 +393,7 @@ impl AppDelegate {
             ivars.settings.borrow().clone(),
             ivars.data_dir.get().cloned().unwrap_or_default(),
             PreferencesHooks {
+                current: Box::new(current),
                 apply: Box::new(apply),
                 suspend_hotkey: Box::new(suspend),
                 clear_clipboard: Box::new(move || {
@@ -388,6 +421,9 @@ fn on_gesture(shelf: &Shelf, gesture: Gesture) {
     if !done {
         NSBeep();
     } else if gesture != Gesture::Press {
-        shelf.show();
+        // Something was added or recalled: show it, then slide away again
+        // if the user leaves it alone.
+        shelf.appear_at_edge();
+        shelf.arm_auto_hide(HIDE_AFTER_ADD);
     }
 }

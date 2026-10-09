@@ -11,7 +11,10 @@ Requires macOS 13 or later on Apple Silicon.
 
 - **Shelf that appears when you drag.** Start dragging anything and the shelf
   slides in at the screen edge (or near the cursor, or only when you approach
-  the edge). It hides again if you don't use it.
+  the edge). It hides again if you don't use it, and slides away about a
+  second after you're done with it.
+- **Put it anywhere.** Drag the shelf by its background to move it; it comes
+  back to that spot. "Move Shelf Back to Edge" undoes it.
 - **Holds almost anything.** Files (as references, never copied), Mail and
   Photos attachments, text, rich text, links and images. Several items
   dropped together become a stack.
@@ -55,6 +58,8 @@ of the shelf, and opening Yoinks again brings up the shelf.
 | Bring back what you dragged out | Hold ⌃⌥Y, or menu bar > Recall Last Dragged Item |
 | Preview | Select a tile and press Space |
 | Split a stack | Right-click > Unstack |
+| Move the shelf | Drag its background (between or below the tiles) |
+| Put it back at the edge | Menu bar or gear > Move Shelf Back to Edge |
 | Clipboard history | Menu bar (or the shelf's gear) > Clipboard History… (type to search, Return copies) |
 | Preferences | Menu bar or the shelf's gear button > Preferences… |
 

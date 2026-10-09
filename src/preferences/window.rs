@@ -40,6 +40,10 @@ const HISTORY_SIZES: [usize; 5] = [25, 50, 100, 200, 500];
 
 /// What the window needs from the rest of the app.
 pub struct PreferencesHooks {
+    /// The settings in effect right now. Changes start from these, so
+    /// changes made elsewhere (like moving the shelf) are never overwritten
+    /// by a stale copy.
+    pub current: Box<dyn Fn() -> Settings>,
     /// Save and apply settings; an error describes a shortcut problem.
     pub apply: Box<dyn Fn(Settings) -> Result<(), String>>,
     /// Turn the global shortcut off while a new one is being recorded.
@@ -94,7 +98,11 @@ define_class!(
         #[unsafe(method(edgeChanged:))]
         fn edge_changed(&self, sender: &NSPopUpButton) {
             if let Some((edge, _)) = usize::try_from(sender.indexOfSelectedItem()).ok().and_then(|i| EDGES.get(i)) {
-                self.update(|s| s.shelf_edge = *edge);
+                // A new edge also brings a dragged shelf back to it.
+                self.update(|s| {
+                    s.shelf_edge = *edge;
+                    s.shelf_position = None;
+                });
             }
         }
 
@@ -109,6 +117,12 @@ define_class!(
         fn menu_bar_icon_changed(&self, sender: &NSButton) {
             let show = sender.state() == NSControlStateValueOn;
             self.update(|s| s.show_menu_bar_icon = show);
+        }
+
+        #[unsafe(method(hideAfterUseChanged:))]
+        fn hide_after_use_changed(&self, sender: &NSButton) {
+            let hide = sender.state() == NSControlStateValueOn;
+            self.update(|s| s.hide_after_use = hide);
         }
 
         #[unsafe(method(keepChanged:))]
@@ -220,11 +234,9 @@ impl PreferencesWindow {
 
     /// Applies a change to a copy of the settings and hands it to the app.
     fn apply_change(&self, change: impl FnOnce(&mut Settings)) -> Result<(), String> {
-        let settings = {
-            let mut settings = self.ivars().settings.borrow_mut();
-            change(&mut settings);
-            settings.clone()
-        };
+        let mut settings = (self.ivars().hooks.current)();
+        change(&mut settings);
+        *self.ivars().settings.borrow_mut() = settings.clone();
         let result = (self.ivars().hooks.apply)(settings);
         if let Err(error) = &result {
             eprintln!("yoinks: {error}");
@@ -410,6 +422,23 @@ impl PreferencesWindow {
              and the other menu commands.",
             NOTE_WIDTH,
         );
+        let hide = form::checkbox(
+            mtm,
+            "Hide the shelf after using it",
+            target,
+            sel!(hideAfterUseChanged:),
+        );
+        hide.setState(if settings.hide_after_use {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
+        let hide_note = note(
+            mtm,
+            "It slides away about a second after the pointer leaves it. Drag the shelf by \
+             its background to move it; the gear menu puts it back at the edge.",
+            NOTE_WIDTH,
+        );
         let keep = form::checkbox(
             mtm,
             "Keep items after dragging them out",
@@ -437,6 +466,8 @@ impl PreferencesWindow {
             up(&*indented(mtm, &icon_note)),
             up(&*row(mtm, "Shelf edge:", &edge)),
             up(&*row(mtm, "Show the shelf during drags:", &appear)),
+            up(&*row(mtm, "After use:", &hide)),
+            up(&*indented(mtm, &hide_note)),
             up(&*row(mtm, "After dragging out:", &keep)),
             up(&*row(mtm, "Don't show it for drags from:", &apps_view)),
             up(&*indented(

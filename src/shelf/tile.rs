@@ -156,7 +156,10 @@ define_class!(
                 // Removing the entry takes this tile out of the view
                 // hierarchy; keep it alive until this method returns.
                 let _alive = self.retain();
-                self.with_model(|model, id| model.dragged_out(id));
+                self.with_model(|model, id| {
+                    model.dragged_out(id);
+                    model.view().notify(super::view::ViewEvent::Used);
+                });
             }
         }
     }

@@ -1,8 +1,9 @@
 //! The floating shelf panel and the controller that shows and hides it.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ptr::NonNull;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
+use std::time::{Duration, Instant};
 
 use block2::RcBlock;
 use objc2::rc::Retained;
@@ -13,10 +14,22 @@ use objc2_app_kit::{
     NSEvent, NSFloatingWindowLevel, NSPanel, NSScreen, NSWindow, NSWindowAnimationBehavior,
     NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
 };
-use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
+use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize, NSTimer};
 
-use super::geometry::{ShelfEdge, ShelfFrames, cursor_frames, screen_containing, shelf_frames};
+use super::geometry::{
+    ShelfEdge, ShelfFrames, cursor_frames, custom_frames, screen_containing, shelf_frames,
+};
 use super::model::ShelfModel;
+use super::view::ViewEvent;
+
+/// How long the pointer must stay away before a used shelf hides.
+pub const HIDE_AFTER_USE: Duration = Duration::from_millis(1000);
+/// The same, when the shelf came up because something was added to it from
+/// elsewhere (shortcut, command line, Services) and was never visited.
+pub const HIDE_AFTER_ADD: Duration = Duration::from_millis(3000);
+const AUTO_HIDE_POLL: f64 = 0.25;
+
+type MovedHandler = Box<dyn Fn(Option<NSPoint>)>;
 
 const SLIDE_DURATION: f64 = 0.22;
 const FADE_DURATION: f64 = 0.15;
@@ -99,9 +112,20 @@ enum Visibility {
 /// Owns the shelf panel and its contents, and drives the show/hide
 /// animations.
 pub struct Shelf {
+    this: Weak<Shelf>,
     panel: Retained<ShelfPanel>,
     model: Rc<ShelfModel>,
     edge: Cell<ShelfEdge>,
+    /// Where the user dragged the shelf (bottom-left corner), if anywhere.
+    custom_origin: Cell<Option<NSPoint>>,
+    /// Called when the user moves the shelf or puts it back at the edge.
+    on_moved: RefCell<Option<MovedHandler>>,
+    hide_after_use: Cell<bool>,
+    /// Auto-hide watcher: runs while armed; hides the shelf once the
+    /// pointer has been away from it for `hide_delay`.
+    auto_hide: RefCell<Option<Retained<NSTimer>>>,
+    hide_delay: Cell<Duration>,
+    outside_since: Cell<Option<Instant>>,
     visibility: Rc<Cell<Visibility>>,
     /// Frames for the screen the shelf was last shown on, so it hides back
     /// toward the same edge even if the cursor moved to another display.
@@ -109,18 +133,140 @@ pub struct Shelf {
 }
 
 impl Shelf {
-    pub fn new(mtm: MainThreadMarker, edge: ShelfEdge, model: Rc<ShelfModel>) -> Self {
+    pub fn new(mtm: MainThreadMarker, edge: ShelfEdge, model: Rc<ShelfModel>) -> Rc<Self> {
         let panel = ShelfPanel::new(mtm);
         panel.setContentView(Some(model.view()));
         // Keyboard input (Space for Quick Look, arrows, Delete) goes to the
         // content view.
         panel.makeFirstResponder(Some(model.view()));
-        Self {
+        let shelf = Rc::new_cyclic(|this: &Weak<Self>| Self {
+            this: this.clone(),
             panel,
             model,
             edge: Cell::new(edge),
+            custom_origin: Cell::new(None),
+            on_moved: RefCell::new(None),
+            hide_after_use: Cell::new(true),
+            auto_hide: RefCell::new(None),
+            hide_delay: Cell::new(HIDE_AFTER_USE),
+            outside_since: Cell::new(None),
             visibility: Rc::new(Cell::new(Visibility::Hidden)),
             frames: Cell::new(None),
+        });
+        let weak = Rc::downgrade(&shelf);
+        shelf.model.view().set_on_event(move |event| {
+            if let Some(shelf) = weak.upgrade() {
+                shelf.view_event(event);
+            }
+        });
+        shelf
+    }
+
+    pub fn set_hide_after_use(&self, enabled: bool) {
+        self.hide_after_use.set(enabled);
+        if !enabled {
+            self.disarm_auto_hide();
+        }
+    }
+
+    /// Where the shelf appears instead of its edge (`None`: at the edge).
+    pub fn set_custom_origin(&self, origin: Option<NSPoint>) {
+        self.custom_origin.set(origin);
+    }
+
+    pub fn has_custom_position(&self) -> bool {
+        self.custom_origin.get().is_some()
+    }
+
+    /// Called with the new position whenever the user moves the shelf, or
+    /// with `None` when it is put back at the edge.
+    pub fn set_on_moved(&self, f: impl Fn(Option<NSPoint>) + 'static) {
+        *self.on_moved.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// Forgets the dragged-to position and slides the shelf back to its
+    /// edge if it is showing.
+    pub fn reset_position(&self) {
+        self.custom_origin.set(None);
+        if let Some(f) = &*self.on_moved.borrow() {
+            f(None);
+        }
+        if self.visibility.get() == Visibility::Shown
+            && let Some(frames) = self.edge_or_custom_frames()
+        {
+            self.frames.set(Some(frames));
+            self.animate(frames.shown, 1.0, None);
+        }
+    }
+
+    /// Hides the shelf once the pointer has been away from it for `after`
+    /// (if "hide after use" is on). Called after the shelf was used.
+    pub fn arm_auto_hide(&self, after: Duration) {
+        if !self.hide_after_use.get() || self.visibility.get() != Visibility::Shown {
+            return;
+        }
+        self.hide_delay.set(after);
+        self.outside_since.set(None);
+        if self.auto_hide.borrow().is_some() {
+            return;
+        }
+        let weak = self.this.clone();
+        let block = RcBlock::new(move |_timer: NonNull<NSTimer>| {
+            if let Some(shelf) = weak.upgrade() {
+                shelf.auto_hide_tick();
+            }
+        });
+        // SAFETY: Scheduled on the main run loop (default mode, so it pauses
+        // while a menu is open); the block only touches main-thread state.
+        let timer = unsafe {
+            NSTimer::scheduledTimerWithTimeInterval_repeats_block(AUTO_HIDE_POLL, true, &block)
+        };
+        *self.auto_hide.borrow_mut() = Some(timer);
+    }
+
+    fn disarm_auto_hide(&self) {
+        if let Some(timer) = self.auto_hide.take() {
+            timer.invalidate();
+        }
+        self.outside_since.set(None);
+    }
+
+    fn auto_hide_tick(&self) {
+        if self.visibility.get() != Visibility::Shown {
+            self.disarm_auto_hide();
+            return;
+        }
+        // Not while the pointer is on the shelf, a drag or click is in
+        // progress, or Quick Look is showing one of its items.
+        let busy = self.contains_mouse()
+            || NSEvent::pressedMouseButtons() != 0
+            || self.model.view().is_previewing();
+        if busy {
+            self.outside_since.set(None);
+            return;
+        }
+        let now = Instant::now();
+        let since = self.outside_since.get().unwrap_or(now);
+        self.outside_since.set(Some(since));
+        if now.duration_since(since) >= self.hide_delay.get() {
+            self.hide();
+        }
+    }
+
+    fn view_event(&self, event: ViewEvent) {
+        match event {
+            ViewEvent::Exited | ViewEvent::Used => self.arm_auto_hide(HIDE_AFTER_USE),
+            ViewEvent::Moved(origin) => {
+                self.custom_origin.set(Some(origin));
+                let frame = self.panel.frame();
+                self.frames.set(Some(ShelfFrames {
+                    shown: frame,
+                    hidden: frame,
+                }));
+                if let Some(f) = &*self.on_moved.borrow() {
+                    f(Some(origin));
+                }
+            }
         }
     }
 
@@ -170,31 +316,58 @@ impl Shelf {
         }
     }
 
-    /// Slides the shelf in at its screen edge and gives it keyboard focus,
-    /// for when the user asked for it (shortcut, menu, relaunch).
+    /// Shows the shelf at its edge (or where the user dragged it) and gives
+    /// it keyboard focus, for when the user asked for it (shortcut, menu,
+    /// relaunch). It then stays until dismissed or used.
     pub fn show(&self) {
-        self.present(|visible, _| shelf_frames(visible, self.edge.get()), true);
+        self.disarm_auto_hide();
+        self.present(|| self.edge_or_custom_frames(), true);
     }
 
-    /// Slides the shelf in at its screen edge without taking keyboard focus,
-    /// for automatic appearance during a drag: typing must keep going to the
-    /// app the user is working in.
+    /// Shows the shelf at its edge (or where the user dragged it) without
+    /// taking keyboard focus, for automatic appearance: typing must keep
+    /// going to the app the user is working in.
     pub fn appear_at_edge(&self) {
-        self.present(|visible, _| shelf_frames(visible, self.edge.get()), false);
+        self.present(|| self.edge_or_custom_frames(), false);
     }
 
     /// Fades the shelf in beside the cursor, without taking keyboard focus.
     pub fn appear_at_cursor(&self) {
         self.present(
-            |visible, cursor| cursor_frames(visible, cursor, self.edge.get()),
+            || {
+                let screen = self.active_screen()?;
+                let cursor = NSEvent::mouseLocation();
+                Some(cursor_frames(
+                    screen.visibleFrame(),
+                    cursor,
+                    self.edge.get(),
+                ))
+            },
             false,
         );
     }
 
-    /// Shows the shelf on the screen under the cursor, placed by `layout`
-    /// from that screen's visible frame and the cursor position. With
-    /// `focus`, the panel also becomes key (it never activates the app).
-    fn present(&self, layout: impl FnOnce(NSRect, NSPoint) -> ShelfFrames, focus: bool) {
+    /// Frames at the position the user dragged the shelf to, if that is on
+    /// a connected screen; otherwise at the edge of the screen under the
+    /// cursor.
+    fn edge_or_custom_frames(&self) -> Option<ShelfFrames> {
+        let mtm = self.panel.mtm();
+        if let Some(origin) = self.custom_origin.get() {
+            let screens = NSScreen::screens(mtm);
+            let rects: Vec<NSRect> = screens.iter().map(|screen| screen.frame()).collect();
+            let probe = NSPoint::new(origin.x + 20.0, origin.y + 20.0);
+            if let Some(index) = screen_containing(&rects, probe) {
+                let visible = screens.objectAtIndex(index).visibleFrame();
+                return Some(custom_frames(visible, origin, self.edge.get()));
+            }
+        }
+        let screen = self.active_screen()?;
+        Some(shelf_frames(screen.visibleFrame(), self.edge.get()))
+    }
+
+    /// Shows the shelf with frames from `layout`. With `focus`, the panel
+    /// also becomes key (it never activates the app).
+    fn present(&self, layout: impl FnOnce() -> Option<ShelfFrames>, focus: bool) {
         if focus {
             self.panel.makeKeyWindow();
         }
@@ -208,10 +381,9 @@ impl Shelf {
                 }
             }
             Visibility::Hidden => {
-                let Some(screen) = self.active_screen() else {
+                let Some(frames) = layout() else {
                     return;
                 };
-                let frames = layout(screen.visibleFrame(), NSEvent::mouseLocation());
                 self.frames.set(Some(frames));
                 self.visibility.set(Visibility::Shown);
 
@@ -232,6 +404,7 @@ impl Shelf {
     }
 
     pub fn hide(&self) {
+        self.disarm_auto_hide();
         if self.visibility.get() != Visibility::Shown {
             return;
         }

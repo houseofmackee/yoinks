@@ -1,12 +1,13 @@
 //! The shelf's content: a drop target holding a scrolling column of tiles,
 //! with keyboard selection and Quick Look.
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Weak;
 
+use objc2::ClassType;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
+use objc2::{AnyThread, DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSBeep, NSColor, NSDragOperation, NSDraggingInfo, NSEvent, NSEventType, NSLayoutAttribute,
     NSLayoutConstraint, NSMenu, NSMenuItem, NSMenuItemImportFromDeviceIdentifier, NSPasteboard,
@@ -15,6 +16,7 @@ use objc2_app_kit::{
     NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
     NSWindowDelegate,
 };
+use objc2_app_kit::{NSScroller, NSTrackingArea, NSTrackingAreaOptions};
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSEdgeInsets, NSInteger, NSObject, NSObjectProtocol, NSPoint,
     NSRect, NSSize, ns_string,
@@ -45,6 +47,30 @@ mod key {
     pub const UP: u16 = 126;
 }
 
+/// What the content view tells the shelf about.
+#[derive(Clone, Copy, Debug)]
+pub enum ViewEvent {
+    /// The pointer left the shelf.
+    Exited,
+    /// Something was dropped on or dragged out of the shelf.
+    Used,
+    /// The user dragged the shelf to a new place (bottom-left corner).
+    Moved(NSPoint),
+}
+
+type EventHandler = Box<dyn Fn(ViewEvent)>;
+
+/// A background press that may become a move of the whole shelf.
+#[derive(Clone, Copy)]
+struct Press {
+    mouse: NSPoint,
+    origin: NSPoint,
+    moved: bool,
+}
+
+/// Pointer travel before a background press counts as moving the shelf.
+const MOVE_THRESHOLD: f64 = 3.0;
+
 pub struct ContentIvars {
     model: Weak<ShelfModel>,
     list: Retained<NSStackView>,
@@ -55,6 +81,9 @@ pub struct ContentIvars {
     /// True while this view controls the Quick Look panel.
     quick_look: Cell<bool>,
     menu_button: Retained<MenuButton>,
+    on_event: RefCell<Option<EventHandler>>,
+    press: Cell<Option<Press>>,
+    scroll: OnceCell<Retained<NSScrollView>>,
 }
 
 define_class!(
@@ -90,10 +119,14 @@ define_class!(
         fn perform_drag_operation(&self, info: &ProtocolObject<dyn NSDraggingInfo>) -> bool {
             self.set_highlighted(false);
             let dropped = pasteboard::read(&info.draggingPasteboard());
-            match self.ivars().model.upgrade() {
+            let accepted = match self.ivars().model.upgrade() {
                 Some(model) => model.accept(dropped),
                 None => false,
+            };
+            if accepted {
+                self.notify(ViewEvent::Used);
             }
+            accepted
         }
     }
 
@@ -113,10 +146,74 @@ define_class!(
             }
         }
 
-        // Clicking the background clears the selection.
+        // Pressing the background starts a possible move of the shelf; a
+        // click without moving clears the selection instead.
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self, _event: &NSEvent) {
-            self.select(None);
+            if let Some(window) = self.window() {
+                self.ivars().press.set(Some(Press {
+                    mouse: NSEvent::mouseLocation(),
+                    origin: window.frame().origin,
+                    moved: false,
+                }));
+            }
+        }
+
+        #[unsafe(method(mouseDragged:))]
+        fn mouse_dragged(&self, _event: &NSEvent) {
+            let (Some(mut press), Some(window)) = (self.ivars().press.get(), self.window()) else {
+                return;
+            };
+            let mouse = NSEvent::mouseLocation();
+            let (dx, dy) = (mouse.x - press.mouse.x, mouse.y - press.mouse.y);
+            if !press.moved && dx.abs().max(dy.abs()) < MOVE_THRESHOLD {
+                return;
+            }
+            press.moved = true;
+            self.ivars().press.set(Some(press));
+            window.setFrameOrigin(NSPoint::new(press.origin.x + dx, press.origin.y + dy));
+        }
+
+        #[unsafe(method(mouseUp:))]
+        fn mouse_up(&self, _event: &NSEvent) {
+            match (self.ivars().press.take(), self.window()) {
+                (Some(press), Some(window)) if press.moved => {
+                    self.notify(ViewEvent::Moved(window.frame().origin));
+                }
+                _ => self.select(None),
+            }
+        }
+
+        // Empty areas (between and below the tiles) belong to the shelf
+        // itself, so pressing there moves the shelf. Tiles, the gear button
+        // and the scroll bar keep their own clicks.
+        #[unsafe(method_id(hitTest:))]
+        fn hit_test(&self, point: NSPoint) -> Option<Retained<NSView>> {
+            // SAFETY: Calling the superclass implementation of the same method.
+            let hit: Option<Retained<NSView>> = unsafe { msg_send![super(self), hitTest: point] };
+            hit.map(|hit| {
+                let keeps_own_clicks = hit.isKindOfClass(TileView::class())
+                    || hit.isKindOfClass(MenuButton::class())
+                    || hit.isKindOfClass(NSScroller::class());
+                if keeps_own_clicks {
+                    hit
+                } else {
+                    Retained::into_super(Retained::into_super(self.retain()))
+                }
+            })
+        }
+
+        // Scrolling goes to the list even though the shelf owns its clicks.
+        #[unsafe(method(scrollWheel:))]
+        fn scroll_wheel(&self, event: &NSEvent) {
+            if let Some(scroll) = self.ivars().scroll.get() {
+                scroll.scrollWheel(event);
+            }
+        }
+
+        #[unsafe(method(mouseExited:))]
+        fn mouse_exited(&self, _event: &NSEvent) {
+            self.notify(ViewEvent::Exited);
         }
 
         #[unsafe(method(acceptsFirstMouse:))]
@@ -309,6 +406,9 @@ impl ShelfContentView {
             selected: Cell::new(None),
             quick_look: Cell::new(false),
             menu_button: MenuButton::new(mtm),
+            on_event: RefCell::new(None),
+            press: Cell::new(None),
+            scroll: OnceCell::new(),
         });
         // SAFETY: `initWithFrame:` is NSView's designated initializer.
         let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: rect] };
@@ -327,6 +427,21 @@ impl ShelfContentView {
             layer.setMasksToBounds(true);
         }
         self.registerForDraggedTypes(&pasteboard::accepted_types());
+        // Report the pointer leaving, for "hide after use". `InVisibleRect`
+        // keeps the area matched to the view as the shelf resizes.
+        // SAFETY: We own the tracking area's owner (ourselves) for its life.
+        let tracking = unsafe {
+            NSTrackingArea::initWithRect_options_owner_userInfo(
+                NSTrackingArea::alloc(),
+                NSRect::ZERO,
+                NSTrackingAreaOptions::MouseEnteredAndExited
+                    | NSTrackingAreaOptions::ActiveAlways
+                    | NSTrackingAreaOptions::InVisibleRect,
+                Some(self.as_ref()),
+                None,
+            )
+        };
+        self.addTrackingArea(&tracking);
 
         // Scrolling column of tiles. The document view is flipped so tiles
         // stack from the top.
@@ -334,6 +449,7 @@ impl ShelfContentView {
         let document = FlippedView::new(mtm);
         document.addSubview(&ivars.list);
         let scroll = NSScrollView::new(mtm);
+        let _ = ivars.scroll.set(scroll.clone());
         scroll.setDrawsBackground(false);
         scroll.setHasVerticalScroller(true);
         scroll.setAutohidesScrollers(true);
@@ -468,6 +584,25 @@ impl ShelfContentView {
         import.setIdentifier(Some(unsafe { NSMenuItemImportFromDeviceIdentifier }));
         menu.addItem(&import);
         menu
+    }
+
+    /// Where `ViewEvent`s go (the shelf).
+    pub fn set_on_event(&self, f: impl Fn(ViewEvent) + 'static) {
+        *self.ivars().on_event.borrow_mut() = Some(Box::new(f));
+    }
+
+    pub fn notify(&self, event: ViewEvent) {
+        if let Some(f) = &*self.ivars().on_event.borrow() {
+            f(event);
+        }
+    }
+
+    /// True while Quick Look is showing one of this shelf's items.
+    pub fn is_previewing(&self) -> bool {
+        self.ivars().quick_look.get()
+            && self
+                .with_preview_panel(|panel| panel.isVisible())
+                .unwrap_or(false)
     }
 
     /// The gear button at the bottom; `make` builds the menu it opens.

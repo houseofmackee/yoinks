@@ -96,6 +96,24 @@ pub fn near_edge(screen: NSRect, point: NSPoint, edge: ShelfEdge) -> bool {
     }
 }
 
+/// Frames for a shelf the user dragged to `origin` (its bottom-left corner):
+/// the usual size for `visible`, kept inside it. It fades rather than slides.
+pub fn custom_frames(visible: NSRect, origin: NSPoint, edge: ShelfEdge) -> ShelfFrames {
+    let size = shelf_frames(visible, edge).shown.size;
+    let min_x = visible.origin.x;
+    let max_x = (visible.origin.x + visible.size.width - size.width).max(min_x);
+    let min_y = visible.origin.y;
+    let max_y = (visible.origin.y + visible.size.height - size.height).max(min_y);
+    let frame = NSRect::new(
+        NSPoint::new(origin.x.clamp(min_x, max_x), origin.y.clamp(min_y, max_y)),
+        size,
+    );
+    ShelfFrames {
+        shown: frame,
+        hidden: frame,
+    }
+}
+
 /// Returns the index of the first screen frame containing `point`. Edges are
 /// inclusive so the cursor pinned to the top or right of a screen still counts.
 pub fn screen_containing(screens: &[NSRect], point: NSPoint) -> Option<usize> {
@@ -220,5 +238,17 @@ mod tests {
             NSPoint::new(1500.0, 10.0),
             ShelfEdge::Left
         ));
+    }
+
+    #[test]
+    fn custom_frames_keep_the_shelf_on_screen() {
+        let visible = rect(0.0, 0.0, 1440.0, 875.0);
+        let inside = custom_frames(visible, NSPoint::new(600.0, 200.0), ShelfEdge::Left);
+        assert_eq!(inside.shown, inside.hidden);
+        assert_eq!(inside.shown.origin, NSPoint::new(600.0, 200.0));
+        assert_eq!(inside.shown.size.width, SHELF_WIDTH);
+
+        let off = custom_frames(visible, NSPoint::new(1400.0, -50.0), ShelfEdge::Left);
+        assert_eq!(off.shown.origin, NSPoint::new(1440.0 - SHELF_WIDTH, 0.0));
     }
 }

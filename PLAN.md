@@ -332,6 +332,22 @@ Key design points:
   upwards, with nothing pre-selected. Clipboard History opened from there
   appears beside the shelf.
 
+### Feedback from first use (done)
+- [x] Hide after use (`hide_after_use`, on by default; Preferences >
+  General): after a drop, a drag-out, or something added from the command
+  line, Services or the shortcut, the shelf slides away once the pointer
+  has been away for 1 s (3 s for additions the user didn't make on the
+  shelf). Not while the pointer is on it, a mouse button is down, a menu is
+  open or Quick Look shows one of its items. A shelf opened on purpose
+  stays until it has been visited and left.
+- [x] Movable shelf: drag it by its empty background (tiles, the gear and
+  the scroll bar keep their own clicks). The position (`shelf_position`)
+  is saved; the shelf then fades in and out there, on any of its
+  appearance triggers. "Move Shelf Back to Edge" (menu bar and gear menu)
+  and changing the edge in Preferences undo it.
+- [x] Fix: Preferences starts every change from the settings in effect,
+  instead of its own copy, so it cannot overwrite changes made elsewhere.
+
 ## 5. Improvements over Yoink
 
 | Idea | Description |

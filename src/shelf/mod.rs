@@ -22,4 +22,4 @@ pub use item::{Entry, ItemKind, file_name, unix_now};
 pub use materialize::{Content, text_title};
 pub use model::ShelfModel;
 pub use pasteboard::{Dropped, read as read_pasteboard};
-pub use window::Shelf;
+pub use window::{HIDE_AFTER_ADD, Shelf};
