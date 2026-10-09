@@ -12,7 +12,8 @@ use objc2_app_kit::{
 use objc2_foundation::{MainThreadMarker, NSNotification, ns_string};
 
 use super::status_item;
-use crate::shelf::{Shelf, ShelfEdge};
+use crate::paths;
+use crate::shelf::{Shelf, ShelfEdge, ShelfModel};
 
 #[derive(Default)]
 pub struct Ivars {
@@ -43,7 +44,8 @@ define_class!(
                 Ok("left") => ShelfEdge::Left,
                 _ => ShelfEdge::default(),
             };
-            let _ = self.ivars().shelf.set(Shelf::new(mtm, edge));
+            let model = ShelfModel::new(mtm, &paths::data_dir());
+            let _ = self.ivars().shelf.set(Shelf::new(mtm, edge, model));
             let _ = self.ivars().status_item.set(status_item::build(mtm, self));
         }
 
@@ -59,14 +61,15 @@ define_class!(
     unsafe impl NSMenuItemValidation for AppDelegate {
         #[unsafe(method(validateMenuItem:))]
         fn validate_menu_item(&self, item: &NSMenuItem) -> bool {
-            if item.action() == Some(sel!(toggleShelf:)) {
+            let action = item.action();
+            if action == Some(sel!(toggleShelf:)) {
                 item.setTitle(if self.shelf().is_visible() {
                     ns_string!("Hide Shelf")
                 } else {
                     ns_string!("Show Shelf")
                 });
             }
-            true
+            action != Some(sel!(clearShelf:)) || !self.shelf().model().is_empty()
         }
     }
 
@@ -75,6 +78,11 @@ define_class!(
         #[unsafe(method(toggleShelf:))]
         fn toggle_shelf(&self, _sender: Option<&AnyObject>) {
             self.shelf().toggle();
+        }
+
+        #[unsafe(method(clearShelf:))]
+        fn clear_shelf(&self, _sender: Option<&AnyObject>) {
+            self.shelf().model().clear();
         }
 
         #[unsafe(method(hideShelf:))]

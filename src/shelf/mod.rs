@@ -1,7 +1,15 @@
 //! The shelf: a floating panel that holds dropped items.
 
+mod bookmark;
 pub mod geometry;
+mod item;
+mod materialize;
+mod model;
+mod pasteboard;
+mod store;
+mod view;
 mod window;
 
 pub use geometry::ShelfEdge;
+pub use model::ShelfModel;
 pub use window::Shelf;

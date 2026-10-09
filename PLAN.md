@@ -42,9 +42,14 @@ src/
     status_item.rs   menu bar icon and menu
   shelf/
     window.rs        NSPanel subclass: borderless, floating, non-activating
-    view.rs          collection view of items, drag source + drop target
-    item.rs          ShelfItem model (file ref, text, image, URL, promise)
-    store.rs         ShelfStore: ordered items, persistence, observers
+    geometry.rs      pure layout math for the panel
+    view.rs          drop target content view and item tiles
+    model.rs         ShelfModel: ties store, items folder and view together
+    item.rs          Entry/Item model (file ref, text, image, URL, promise)
+    store.rs         ShelfStore: ordered entries and persistence
+    materialize.rs   writes dropped content into owned files
+    pasteboard.rs    reads drag pasteboards
+    bookmark.rs      file bookmarks
   drag/
     monitor.rs       global drag detection (NSEvent global monitor + drag pasteboard polling)
     session.rs       outgoing drag sessions, move/copy/link semantics
@@ -92,16 +97,25 @@ Key design points:
   Clear Shelf and Preferences stay disabled until Phases 2 and 8.
 - Until Preferences exist, the edge can be set with `YOINKS_SHELF_EDGE=left`.
 
-### Phase 2: Drop in (accepting items)
-- Register the shelf as a drop target for file URLs, file promises
-  (`NSFilePromiseReceiver`, e.g. Mail attachments, Photos), plain/rich text,
-  images, URLs and colors.
-- Non-file content (text snippets, images) is materialized into a cache folder
-  so it can later be dragged out as a real file.
-- `ShelfItem` kinds: `File(bookmark)`, `Text`, `RichText`, `Image`, `Url`,
-  `Promise(pending)`.
-- Multi-item drops create a **stack** (one tile, expandable), which is a
-  convenient way to keep related items together.
+### Phase 2: Drop in (accepting items) (done)
+- [x] The shelf is a drop target for file URLs, file promises
+  (`NSFilePromiseReceiver`, e.g. Mail attachments, Photos), web links, images
+  (PNG, JPEG, TIFF converted to PNG), rich text and plain text.
+- [x] Non-file content is materialized into
+  `~/Library/Application Support/Yoinks/Items/<item-id>/` (`.txt`, `.rtf`,
+  `.png`, `.webloc`) so it can later be dragged out as a real file. Only
+  these owned copies are ever deleted; the user's files never are.
+- [x] `Item` kinds: `File`, `Text`, `RichText`, `Image`, `Url`, `Pending`.
+  Entries and items have stable UUIDs and timestamps.
+- [x] Multi-item drops create a **stack** (one tile, Finder multi-document
+  icon). Right-click > Unstack splits it in place.
+- [x] Shelf persisted to `shelf.json` (atomic writes, behind a
+  `Persistence` trait). On launch, file bookmarks follow renamed or moved
+  files and missing files are dropped. A corrupt file is set aside.
+- [x] Tile context menu: Open, Reveal in Finder, Unstack, Remove.
+  Double-click opens. Clear Shelf in the menu bar menu.
+- `YOINKS_DATA_DIR` overrides the data folder (used for testing).
+- Deferred: dropping colors (low value; revisit with Phase 6 previews).
 
 ### Phase 3: Drag out (Finder semantics)
 - Shelf tiles act as `NSDraggingSource`; write file URLs and native types to

@@ -10,16 +10,14 @@ use objc2::runtime::AnyObject;
 use objc2::{MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAnimatablePropertyContainer, NSAnimationContext, NSApplication, NSBackingStoreType, NSColor,
-    NSEvent, NSFloatingWindowLevel, NSLayoutConstraint, NSPanel, NSScreen, NSTextAlignment,
-    NSTextField, NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState,
-    NSVisualEffectView, NSWindow, NSWindowAnimationBehavior, NSWindowCollectionBehavior,
-    NSWindowStyleMask, NSWorkspace,
+    NSEvent, NSFloatingWindowLevel, NSPanel, NSScreen, NSWindow, NSWindowAnimationBehavior,
+    NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
 };
-use objc2_foundation::{MainThreadMarker, NSArray, NSPoint, NSRect, NSSize, ns_string};
+use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
 
 use super::geometry::{ShelfEdge, ShelfFrames, screen_containing, shelf_frames};
+use super::model::ShelfModel;
 
-const CORNER_RADIUS: f64 = 14.0;
 const SLIDE_DURATION: f64 = 0.22;
 const FADE_DURATION: f64 = 0.15;
 
@@ -86,45 +84,8 @@ impl ShelfPanel {
         panel.setBackgroundColor(Some(&NSColor::clearColor()));
         panel.setHasShadow(true);
 
-        panel.setContentView(Some(&content_view(mtm)));
         panel
     }
-}
-
-/// Rounded vibrancy background with a placeholder label. Phase 2 replaces the
-/// label with the item grid.
-fn content_view(mtm: MainThreadMarker) -> Retained<NSVisualEffectView> {
-    let bounds = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(112.0, 200.0));
-    let effect = NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(mtm), bounds);
-    effect.setMaterial(NSVisualEffectMaterial::Popover);
-    effect.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-    effect.setState(NSVisualEffectState::Active);
-    effect.setWantsLayer(true);
-    if let Some(layer) = effect.layer() {
-        layer.setCornerRadius(CORNER_RADIUS);
-        layer.setMasksToBounds(true);
-    }
-
-    let label = NSTextField::wrappingLabelWithString(ns_string!("Drop items here"), mtm);
-    label.setAlignment(NSTextAlignment::Center);
-    label.setTextColor(Some(&NSColor::secondaryLabelColor()));
-    label.setTranslatesAutoresizingMaskIntoConstraints(false);
-    effect.addSubview(&label);
-    // Auto Layout keeps the label centered whatever height the shelf takes on
-    // the current screen.
-    NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[
-        label
-            .centerXAnchor()
-            .constraintEqualToAnchor(&effect.centerXAnchor()),
-        label
-            .centerYAnchor()
-            .constraintEqualToAnchor(&effect.centerYAnchor()),
-        label
-            .widthAnchor()
-            .constraintEqualToAnchor_constant(&effect.widthAnchor(), -16.0),
-    ]));
-
-    effect
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,9 +96,11 @@ enum Visibility {
     Hiding,
 }
 
-/// Owns the shelf panel and drives its show/hide animations.
+/// Owns the shelf panel and its contents, and drives the show/hide
+/// animations.
 pub struct Shelf {
     panel: Retained<ShelfPanel>,
+    model: Rc<ShelfModel>,
     edge: ShelfEdge,
     visibility: Rc<Cell<Visibility>>,
     /// Frames for the screen the shelf was last shown on, so it hides back
@@ -146,13 +109,20 @@ pub struct Shelf {
 }
 
 impl Shelf {
-    pub fn new(mtm: MainThreadMarker, edge: ShelfEdge) -> Self {
+    pub fn new(mtm: MainThreadMarker, edge: ShelfEdge, model: Rc<ShelfModel>) -> Self {
+        let panel = ShelfPanel::new(mtm);
+        panel.setContentView(Some(model.view()));
         Self {
-            panel: ShelfPanel::new(mtm),
+            panel,
+            model,
             edge,
             visibility: Rc::new(Cell::new(Visibility::Hidden)),
             frames: Cell::new(None),
         }
+    }
+
+    pub fn model(&self) -> &ShelfModel {
+        &self.model
     }
 
     pub fn is_visible(&self) -> bool {

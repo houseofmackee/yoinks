@@ -6,7 +6,9 @@
 compile_error!("yoinks only supports macOS");
 
 mod app;
+mod paths;
 mod shelf;
+mod ui;
 
 use objc2::MainThreadMarker;
 use objc2::runtime::ProtocolObject;
