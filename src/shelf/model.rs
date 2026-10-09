@@ -29,6 +29,9 @@ pub struct ShelfModel {
     recent: RefCell<Recent>,
     /// Keep entries on the shelf after they are dragged out.
     keep_after_drag_out: Cell<bool>,
+    /// Bumped on every change, so observers can tell whether anything
+    /// happened between two points in time.
+    revision: Cell<u64>,
 }
 
 impl ShelfModel {
@@ -42,6 +45,7 @@ impl ShelfModel {
             view: ShelfContentView::new(mtm, weak.clone()),
             recent: RefCell::default(),
             keep_after_drag_out: Cell::new(false),
+            revision: Cell::new(0),
         });
         model
             .store
@@ -65,6 +69,10 @@ impl ShelfModel {
 
     pub fn is_empty(&self) -> bool {
         self.store.borrow().is_empty()
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision.get()
     }
 
     pub fn set_keep_after_drag_out(&self, keep: bool) {
@@ -322,6 +330,7 @@ impl ShelfModel {
     }
 
     fn reload(&self) {
+        self.revision.set(self.revision.get() + 1);
         let store = self.store.borrow();
         self.view.reload(store.entries());
     }

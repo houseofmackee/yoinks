@@ -2,6 +2,7 @@
 //! menu actions.
 
 use std::cell::OnceCell;
+use std::rc::Rc;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
@@ -12,13 +13,16 @@ use objc2_app_kit::{
 use objc2_foundation::{MainThreadMarker, NSNotification, ns_string};
 
 use super::status_item;
+use crate::drag::DragMonitor;
 use crate::paths;
-use crate::shelf::{Shelf, ShelfEdge, ShelfModel};
+use crate::settings::Settings;
+use crate::shelf::{Shelf, ShelfModel};
 
 #[derive(Default)]
 pub struct Ivars {
-    shelf: OnceCell<Shelf>,
+    shelf: OnceCell<Rc<Shelf>>,
     status_item: OnceCell<Retained<NSStatusItem>>,
+    drag_monitor: OnceCell<Option<Rc<DragMonitor>>>,
 }
 
 define_class!(
@@ -39,18 +43,16 @@ define_class!(
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_finish_launching(&self, _notification: &NSNotification) {
             let mtm = self.mtm();
-            // TODO(phase 8): read the edge from settings instead of the environment.
-            let edge = match std::env::var("YOINKS_SHELF_EDGE").as_deref() {
-                Ok("left") => ShelfEdge::Left,
-                _ => ShelfEdge::default(),
-            };
-            let model = ShelfModel::new(mtm, &paths::data_dir());
-            // TODO(phase 8): read from settings instead of the environment.
-            model.set_keep_after_drag_out(
-                std::env::var_os("YOINKS_KEEP_AFTER_DRAG_OUT").is_some_and(|v| v == "1"),
-            );
-            let _ = self.ivars().shelf.set(Shelf::new(mtm, edge, model));
-            let _ = self.ivars().status_item.set(status_item::build(mtm, self));
+            let data_dir = paths::data_dir();
+            let settings = Settings::load(&data_dir.join("settings.json"));
+            let model = ShelfModel::new(mtm, &data_dir);
+            model.set_keep_after_drag_out(settings.keep_after_drag_out);
+            let shelf = Rc::new(Shelf::new(mtm, settings.shelf_edge, model));
+            let drag_monitor = DragMonitor::start(Rc::clone(&shelf), &settings);
+            let ivars = self.ivars();
+            let _ = ivars.shelf.set(shelf);
+            let _ = ivars.drag_monitor.set(drag_monitor);
+            let _ = ivars.status_item.set(status_item::build(mtm, self));
         }
 
         // Launching the app again (Finder, Spotlight, `open`) shows the shelf.

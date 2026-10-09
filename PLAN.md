@@ -53,17 +53,16 @@ src/
     promise.rs       file promise + content writer for dragging content out
     recent.rs        recall buffer of dragged-out entries
   drag/
-    monitor.rs       global drag detection (NSEvent global monitor + drag pasteboard polling)
-    session.rs       outgoing drag sessions, move/copy/link semantics
+    monitor.rs       shows/hides the shelf for system-wide drags
+    tracker.rs       pure drag recognition state machine
   clipboard/
     watcher.rs       NSPasteboard changeCount polling
     history.rs       bounded ring buffer + persistence
     filters.rs       password manager and ignored-app rules
   hotkey.rs          global shortcut: press, long press, double press
   preview.rs         thumbnails and QuickLook panel
-  settings/
-    model.rs         typed settings with serde defaults
-    window.rs        preferences UI
+  settings.rs        typed settings with serde defaults (settings.json)
+  settings/          (Phase 8) preferences UI
   integrations/
     cli.rs           `yoinks add <path>` via a tiny IPC socket or URL scheme
     url_scheme.rs    yoinks://add?path=...
@@ -97,7 +96,7 @@ Key design points:
 - [x] Escape hides the shelf; relaunching the app shows it.
 - [x] Status item menu: Show/Hide Shelf, Clear Shelf, Preferences, Quit.
   Clear Shelf and Preferences stay disabled until Phases 2 and 8.
-- Until Preferences exist, the edge can be set with `YOINKS_SHELF_EDGE=left`.
+- The edge is the `shelf_edge` setting (see Phase 4 for `settings.json`).
 
 ### Phase 2: Drop in (accepting items) (done)
 - [x] The shelf is a drop target for file URLs, file promises
@@ -128,10 +127,9 @@ Key design points:
 - [x] Text, rich text and links go out as a file promise plus their content:
   Finder writes a file, while text editors, text fields and browsers get the
   text or link (a file URL makes TextEdit insert an attachment instead).
-- [x] After a successful drag out the entry leaves the shelf. "Keep items
-  after dragging out" exists in the model (`YOINKS_KEEP_AFTER_DRAG_OUT=1`
-  until Preferences in Phase 8); kept items follow their files if Finder
-  moved them.
+- [x] After a successful drag out the entry leaves the shelf, unless the
+  `keep_after_drag_out` setting is on; kept items follow their files if
+  Finder moved them.
 - [x] The last 10 dragged-out entries can be recalled (menu bar: Recall
   Last Dragged Item; hotkey long press in Phase 5). Recall follows moved
   files via bookmarks. A file Yoinks created that was moved out becomes the
@@ -144,17 +142,23 @@ Key design points:
 - Known limit: recall cannot follow a file that Finder moved to another
   volume (that is a copy plus delete, so the bookmark points at nothing).
 
-### Phase 4: Automatic appearance
-- Detect a drag anywhere on the system: global `NSEvent` monitor for
-  `leftMouseDragged` combined with checking `NSPasteboard(name: .drag)`
-  `changeCount`. This needs no Accessibility permission.
-- Appearance modes (from Yoink):
-  1. Immediately at the screen edge when a drag starts.
-  2. Only when the cursor approaches the screen edge.
-  3. At the mouse cursor.
-- Auto-hide when the drag ends and the shelf is empty.
-- Per-app suppression list: do not auto-show when the frontmost app is in the
-  list (the hotkey still works).
+### Phase 4: Automatic appearance (done)
+- [x] System-wide drag detection: a global `NSEvent` monitor for left mouse
+  down/dragged, and a press only counts as a drag once the drag pasteboard's
+  `changeCount` changes. Window moves, text selection and rubber-band
+  selection never show the shelf. No Accessibility permission needed.
+- [x] Drag end is detected by polling the mouse button (global monitors do
+  not reliably see the mouse-up of another app's drag).
+- [x] Appearance modes (`appear_on_drag`): `at_edge` (default), `near_edge`
+  (within 40 pt of the shelf's screen edge), `at_cursor` (fades in beside
+  the cursor), `off`.
+- [x] Auto-hide when the drag ends, unless something was dropped on the
+  shelf or the cursor is over it. A shelf opened by hand is left alone.
+- [x] Per-app suppression: `ignored_apps` bundle ids (the frontmost app at
+  drag start); the menu bar and shortcut still work.
+- [x] Settings moved forward from Phase 8: typed `settings.json` in the data
+  folder with serde defaults, written on first launch. Changes take effect
+  on relaunch until the Preferences window exists.
 
 ### Phase 5: Global keyboard shortcut
 - Configurable hotkey (default ⌃⌥Y) with three gestures:
@@ -184,6 +188,8 @@ Key design points:
   clipboard entries, like Yoink's Notification Center widget.
 
 ### Phase 8: Preferences
+- The settings model and `settings.json` already exist (Phase 4); this
+  phase adds the window and live updates.
 - General: launch at login (`SMAppService.mainApp`), shelf edge, appearance
   mode, keep items after drag out, show in Dock toggle.
 - Shortcut: hotkey recorder and gesture timing.

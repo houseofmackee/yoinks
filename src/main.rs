@@ -6,7 +6,9 @@
 compile_error!("yoinks only supports macOS");
 
 mod app;
+mod drag;
 mod paths;
+mod settings;
 mod shelf;
 mod ui;
 

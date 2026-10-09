@@ -15,7 +15,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
 
-use super::geometry::{ShelfEdge, ShelfFrames, screen_containing, shelf_frames};
+use super::geometry::{ShelfEdge, ShelfFrames, cursor_frames, screen_containing, shelf_frames};
 use super::model::ShelfModel;
 
 const SLIDE_DURATION: f64 = 0.22;
@@ -125,8 +125,23 @@ impl Shelf {
         &self.model
     }
 
+    pub fn edge(&self) -> ShelfEdge {
+        self.edge
+    }
+
     pub fn is_visible(&self) -> bool {
         self.visibility.get() == Visibility::Shown
+    }
+
+    /// True while the shelf is on screen and the cursor is over it.
+    pub fn contains_mouse(&self) -> bool {
+        self.visibility.get() != Visibility::Hidden
+            && screen_containing(&[self.panel.frame()], NSEvent::mouseLocation()).is_some()
+    }
+
+    /// The full frame of the screen under the cursor.
+    pub fn screen_under_cursor(&self) -> Option<NSRect> {
+        self.active_screen().map(|screen| screen.frame())
     }
 
     pub fn toggle(&self) {
@@ -137,7 +152,19 @@ impl Shelf {
         }
     }
 
+    /// Slides the shelf in at its screen edge.
     pub fn show(&self) {
+        self.present(|visible, _| shelf_frames(visible, self.edge));
+    }
+
+    /// Fades the shelf in beside the cursor.
+    pub fn show_at_cursor(&self) {
+        self.present(|visible, cursor| cursor_frames(visible, cursor, self.edge));
+    }
+
+    /// Shows the shelf on the screen under the cursor, placed by `layout`
+    /// from that screen's visible frame and the cursor position.
+    fn present(&self, layout: impl FnOnce(NSRect, NSPoint) -> ShelfFrames) {
         match self.visibility.get() {
             Visibility::Shown => {}
             Visibility::Hiding => {
@@ -148,9 +175,10 @@ impl Shelf {
                 }
             }
             Visibility::Hidden => {
-                let Some(frames) = self.frames_for_active_screen() else {
+                let Some(screen) = self.active_screen() else {
                     return;
                 };
+                let frames = layout(screen.visibleFrame(), NSEvent::mouseLocation());
                 self.frames.set(Some(frames));
                 self.visibility.set(Visibility::Shown);
 
@@ -208,16 +236,15 @@ impl Shelf {
         NSAnimationContext::runAnimationGroup_completionHandler(&changes, completion.as_deref());
     }
 
-    /// Frames for the screen under the mouse, falling back to the main screen.
-    fn frames_for_active_screen(&self) -> Option<ShelfFrames> {
+    /// The screen under the mouse, falling back to the main screen.
+    fn active_screen(&self) -> Option<Retained<NSScreen>> {
         let mtm = self.panel.mtm();
         let screens = NSScreen::screens(mtm);
         let rects: Vec<NSRect> = screens.iter().map(|screen| screen.frame()).collect();
-        let screen = match screen_containing(&rects, NSEvent::mouseLocation()) {
-            Some(index) => screens.objectAtIndex(index),
-            None => NSScreen::mainScreen(mtm)?,
-        };
-        Some(shelf_frames(screen.visibleFrame(), self.edge))
+        match screen_containing(&rects, NSEvent::mouseLocation()) {
+            Some(index) => Some(screens.objectAtIndex(index)),
+            None => NSScreen::mainScreen(mtm),
+        }
     }
 }
 
