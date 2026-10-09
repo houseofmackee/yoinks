@@ -43,7 +43,10 @@ src/
   shelf/
     window.rs        NSPanel subclass: borderless, floating, non-activating
     geometry.rs      pure layout math for the panel
-    view.rs          drop target content view and item tiles
+    view.rs          content view: drop target, selection, keyboard, Quick Look
+    tile.rs          one entry: thumbnail, title, badge; drag source
+    thumbnail.rs     Quick Look thumbnail cache
+    describe.rs      tooltip text
     model.rs         ShelfModel: ties store, items folder and view together
     item.rs          Entry/Item model (file ref, text, image, URL, promise)
     store.rs         ShelfStore: ordered entries and persistence
@@ -63,7 +66,6 @@ src/
     shortcut.rs      parse "control+option+Y" into Carbon key code + modifiers
     gesture.rs       pure press / long press / double press state machine
     carbon.rs        RegisterEventHotKey registration and dispatch
-  preview.rs         thumbnails and QuickLook panel
   settings.rs        typed settings with serde defaults (settings.json)
   settings/          (Phase 8) preferences UI
   integrations/
@@ -185,10 +187,25 @@ Key design points:
   system shortcuts.
 - Shortcut recorder control: Phase 8.
 
-### Phase 6: Previews
-- Tile thumbnails via `QLThumbnailGenerator`, cached on disk.
-- Space bar / click opens the full `QLPreviewPanel` for the selected item.
-- Hover tooltip with name, size, kind and original location.
+### Phase 6: Previews (done)
+- [x] Tile thumbnails from `QLThumbnailGenerator`, written straight to
+  `Thumbnails/<item-id>.png` (2x the 56 pt icon). Regenerated when the file
+  changes, requested at most once per file version per session, removed
+  with their items and cleaned up on launch. Folders and links keep their
+  Finder icons; stacks show the first item's thumbnail with a count badge.
+- [x] Quick Look: Space (or the tile menu) toggles `QLPreviewPanel` for the
+  selected entry; stacks preview all their items. Up/Down move through the
+  shelf while previewing; the preview zooms from the tile's icon.
+- [x] Selection and keyboard: click to select (accent highlight), Up/Down,
+  Return opens, Delete removes (selection moves to the neighbor), Escape
+  hides. Click the background to deselect.
+- [x] Tooltips: name, kind, size, location of the user's file, the link
+  URL, or a text excerpt. Like all AppKit tooltips they only appear while
+  the shelf has keyboard focus (after clicking it or opening it with the
+  shortcut or menu).
+- [x] Fix: automatic appearance during a drag no longer takes keyboard
+  focus, so typing keeps going to the app the user is working in. Opening
+  the shelf on purpose still focuses it.
 
 ### Phase 7: Clipboard history
 - Poll `NSPasteboard.general.changeCount` (about every 0.5 s, coalesced with

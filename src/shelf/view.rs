@@ -1,37 +1,55 @@
-//! The shelf's content: a drop target holding a scrolling column of tiles.
+//! The shelf's content: a drop target holding a scrolling column of tiles,
+//! with keyboard selection and Quick Look.
 
-use std::cell::{Cell, OnceCell};
+use std::cell::{Cell, RefCell};
 use std::rc::Weak;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{AnyThread, DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
+use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSColor, NSDragOperation, NSDraggingContext, NSDraggingInfo, NSDraggingItem, NSDraggingSession,
-    NSDraggingSource, NSEvent, NSFont, NSImage, NSImageScaling, NSImageView, NSLayoutAttribute,
-    NSLayoutConstraint, NSMenu, NSResponder, NSScrollView, NSStackView, NSTextAlignment,
+    NSApplication, NSBeep, NSColor, NSDragOperation, NSDraggingInfo, NSEvent, NSEventType,
+    NSLayoutAttribute, NSLayoutConstraint, NSResponder, NSScrollView, NSStackView, NSTextAlignment,
     NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSVisualEffectBlendingMode,
-    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWorkspace,
+    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindowDelegate,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSArray, NSEdgeInsets, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize,
-    NSString, ns_string,
+    MainThreadMarker, NSArray, NSEdgeInsets, NSInteger, NSObject, NSObjectProtocol, NSPoint,
+    NSRect, NSSize, ns_string,
+};
+use objc2_quick_look_ui::{
+    QLPreviewItem, QLPreviewPanel, QLPreviewPanelDataSource, QLPreviewPanelDelegate,
 };
 use uuid::Uuid;
 
-use super::item::{Entry, ItemKind};
+use super::item::Entry;
 use super::model::ShelfModel;
 use super::pasteboard;
-use crate::ui::menu_item;
+use super::tile::TileView;
 
 const CORNER_RADIUS: f64 = 14.0;
-const TILE_WIDTH: f64 = 96.0;
-const ICON_SIZE: f64 = 56.0;
+
+/// Virtual key codes handled by the shelf.
+mod key {
+    pub const RETURN: u16 = 36;
+    pub const SPACE: u16 = 49;
+    pub const DELETE: u16 = 51;
+    pub const ESCAPE: u16 = 53;
+    pub const ENTER: u16 = 76;
+    pub const FORWARD_DELETE: u16 = 117;
+    pub const DOWN: u16 = 125;
+    pub const UP: u16 = 126;
+}
 
 pub struct ContentIvars {
     model: Weak<ShelfModel>,
     list: Retained<NSStackView>,
     placeholder: Retained<NSTextField>,
+    /// Entry ids in display order, for keyboard navigation.
+    order: RefCell<Vec<Uuid>>,
+    selected: Cell<Option<Uuid>>,
+    /// True while this view controls the Quick Look panel.
+    quick_look: Cell<bool>,
 }
 
 define_class!(
@@ -73,6 +91,137 @@ define_class!(
             }
         }
     }
+
+    // Keyboard: Space toggles Quick Look, arrows move the selection, Return
+    // opens, Delete removes, Escape hides the shelf.
+    impl ShelfContentView {
+        #[unsafe(method(acceptsFirstResponder))]
+        fn accepts_first_responder(&self) -> bool {
+            true
+        }
+
+        #[unsafe(method(keyDown:))]
+        fn key_down(&self, event: &NSEvent) {
+            if !self.handle_key(event) {
+                // SAFETY: Calling the superclass implementation of the same method.
+                let _: () = unsafe { msg_send![super(self), keyDown: event] };
+            }
+        }
+
+        // Clicking the background clears the selection.
+        #[unsafe(method(mouseDown:))]
+        fn mouse_down(&self, _event: &NSEvent) {
+            self.select(None);
+        }
+
+        #[unsafe(method(acceptsFirstMouse:))]
+        fn accepts_first_mouse(&self, _event: Option<&NSEvent>) -> bool {
+            true
+        }
+    }
+
+    // QLPreviewPanelController (an informal protocol): Quick Look finds us
+    // in the key window's responder chain.
+    impl ShelfContentView {
+        #[unsafe(method(acceptsPreviewPanelControl:))]
+        fn accepts_preview_panel_control(&self, _panel: Option<&QLPreviewPanel>) -> bool {
+            true
+        }
+
+        #[unsafe(method(beginPreviewPanelControl:))]
+        fn begin_preview_panel_control(&self, panel: Option<&QLPreviewPanel>) {
+            let Some(panel) = panel else { return };
+            self.ivars().quick_look.set(true);
+            // SAFETY: We implement the data source and delegate protocols.
+            unsafe {
+                panel.setDataSource(Some(ProtocolObject::from_ref(self)));
+                panel.setDelegate(Some(self.as_ref()));
+            }
+        }
+
+        #[unsafe(method(endPreviewPanelControl:))]
+        fn end_preview_panel_control(&self, panel: Option<&QLPreviewPanel>) {
+            self.ivars().quick_look.set(false);
+            if let Some(panel) = panel {
+                // SAFETY: Clearing the data source and delegate is allowed.
+                unsafe {
+                    panel.setDataSource(None);
+                    panel.setDelegate(None);
+                }
+            }
+        }
+    }
+
+    // SAFETY: `NSObjectProtocol` has no safety requirements.
+    unsafe impl NSObjectProtocol for ShelfContentView {}
+
+    // SAFETY: Required by QLPreviewPanelDelegate; no methods are implemented.
+    unsafe impl NSWindowDelegate for ShelfContentView {}
+
+    // SAFETY: The method signatures match the protocol.
+    unsafe impl QLPreviewPanelDataSource for ShelfContentView {
+        #[unsafe(method(numberOfPreviewItemsInPreviewPanel:))]
+        fn number_of_preview_items(&self, _panel: Option<&QLPreviewPanel>) -> NSInteger {
+            self.preview_urls().len() as NSInteger
+        }
+
+        #[unsafe(method_id(previewPanel:previewItemAtIndex:))]
+        fn preview_item(
+            &self,
+            _panel: Option<&QLPreviewPanel>,
+            index: NSInteger,
+        ) -> Option<Retained<ProtocolObject<dyn QLPreviewItem>>> {
+            usize::try_from(index)
+                .ok()
+                .and_then(|index| self.preview_urls().into_iter().nth(index))
+                .map(ProtocolObject::from_retained)
+        }
+    }
+
+    // SAFETY: The method signatures match the protocol.
+    unsafe impl QLPreviewPanelDelegate for ShelfContentView {
+        // Keys pressed while Quick Look is in front: Space closes it, arrows
+        // move through the shelf like in Finder.
+        #[unsafe(method(previewPanel:handleEvent:))]
+        fn preview_panel_handle_event(
+            &self,
+            panel: Option<&QLPreviewPanel>,
+            event: Option<&NSEvent>,
+        ) -> bool {
+            let key_code = event
+                .filter(|event| event.r#type() == NSEventType::KeyDown)
+                .map(|event| event.keyCode());
+            match key_code {
+                Some(key::SPACE) => {
+                    if let Some(panel) = panel {
+                        panel.orderOut(None);
+                    }
+                    true
+                }
+                Some(key::UP) => {
+                    self.move_selection(-1);
+                    true
+                }
+                Some(key::DOWN) => {
+                    self.move_selection(1);
+                    true
+                }
+                _ => false,
+            }
+        }
+
+        // Zoom the preview out of (and back into) the tile's icon.
+        #[unsafe(method(previewPanel:sourceFrameOnScreenForPreviewItem:))]
+        fn preview_source_frame(
+            &self,
+            _panel: Option<&QLPreviewPanel>,
+            _item: Option<&ProtocolObject<dyn QLPreviewItem>>,
+        ) -> NSRect {
+            self.selected_tile()
+                .and_then(|tile| tile.icon_frame_on_screen())
+                .unwrap_or(NSRect::ZERO)
+        }
+    }
 );
 
 /// Files stay where they are, so the drop is a reference rather than a copy
@@ -111,6 +260,9 @@ impl ShelfContentView {
             model,
             list,
             placeholder,
+            order: RefCell::default(),
+            selected: Cell::new(None),
+            quick_look: Cell::new(false),
         });
         // SAFETY: `initWithFrame:` is NSView's designated initializer.
         let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: rect] };
@@ -201,18 +353,186 @@ impl ShelfContentView {
         ]));
     }
 
-    /// Rebuilds the tiles from the store.
-    pub fn reload(&self, entries: &[Entry]) {
+    /// Rebuilds the tiles from the store, keeping the selection if its
+    /// entry still exists.
+    pub fn reload(&self, model: &ShelfModel, entries: &[Entry]) {
         let ivars = self.ivars();
         for view in ivars.list.arrangedSubviews().iter() {
             ivars.list.removeArrangedSubview(&view);
             view.removeFromSuperview();
         }
+        let mtm = self.mtm();
         for entry in entries {
-            let tile = TileView::new(self.mtm(), entry, ivars.model.clone());
+            let thumbnail = entry
+                .items
+                .first()
+                .and_then(|item| model.thumbnail(mtm, item));
+            let tooltip = model.tooltip(entry);
+            let tile = TileView::new(
+                mtm,
+                entry,
+                thumbnail.as_deref(),
+                &tooltip,
+                ivars.model.clone(),
+            );
             ivars.list.addArrangedSubview(&tile);
         }
         ivars.placeholder.setHidden(!entries.is_empty());
+        *ivars.order.borrow_mut() = entries.iter().map(|entry| entry.id).collect();
+        let selected = ivars
+            .selected
+            .get()
+            .filter(|id| ivars.order.borrow().contains(id));
+        self.apply_selection(selected);
+    }
+
+    /// Selects an entry (or nothing), focuses the shelf for keyboard use and
+    /// keeps Quick Look in sync.
+    pub fn select(&self, id: Option<Uuid>) {
+        if let Some(window) = self.window() {
+            window.makeFirstResponder(Some(self));
+        }
+        self.apply_selection(id);
+    }
+
+    fn apply_selection(&self, id: Option<Uuid>) {
+        let changed = self.ivars().selected.replace(id) != id;
+        for tile in self.tiles() {
+            let selected = Some(tile.entry_id()) == id;
+            tile.set_selected(selected);
+            if selected {
+                tile.scrollRectToVisible(tile.bounds());
+            }
+        }
+        if changed && self.ivars().quick_look.get() {
+            self.with_preview_panel(|panel| {
+                // SAFETY: We are the panel's data source.
+                unsafe { panel.reloadData() }
+            });
+        }
+    }
+
+    /// Opens Quick Look for the selected entry, or closes it if open.
+    pub fn toggle_quick_look(&self) {
+        let mtm = self.mtm();
+        // SAFETY: Called on the main thread.
+        let exists = unsafe { QLPreviewPanel::sharedPreviewPanelExists(mtm) };
+        if exists && self.with_preview_panel(|panel| panel.isVisible()) == Some(true) {
+            self.with_preview_panel(|panel| panel.orderOut(None));
+            return;
+        }
+        if self.preview_urls().is_empty() {
+            NSBeep();
+            return;
+        }
+        // Quick Look looks for a controller in the key window's responder
+        // chain, so focus ourselves first. Our app is otherwise never active;
+        // activate it so the preview comes to the front.
+        if let Some(window) = self.window() {
+            window.makeKeyWindow();
+            window.makeFirstResponder(Some(self));
+        }
+        #[allow(deprecated)]
+        NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
+        self.with_preview_panel(|panel| panel.makeKeyAndOrderFront(None));
+    }
+
+    /// Removes an entry, moving the selection to its neighbor.
+    pub fn remove(&self, id: Uuid) {
+        let neighbor = {
+            let order = self.ivars().order.borrow();
+            let index = order.iter().position(|other| *other == id);
+            index.and_then(|i| {
+                order
+                    .get(i + 1)
+                    .or_else(|| i.checked_sub(1).and_then(|j| order.get(j)))
+                    .copied()
+            })
+        };
+        let was_selected = self.ivars().selected.get() == Some(id);
+        if let Some(model) = self.ivars().model.upgrade() {
+            model.remove(id);
+        }
+        if was_selected {
+            self.apply_selection(neighbor);
+        }
+    }
+
+    fn handle_key(&self, event: &NSEvent) -> bool {
+        let selected = self.ivars().selected.get();
+        match event.keyCode() {
+            key::SPACE => self.toggle_quick_look(),
+            key::UP => self.move_selection(-1),
+            key::DOWN => self.move_selection(1),
+            key::RETURN | key::ENTER => match (selected, self.ivars().model.upgrade()) {
+                (Some(id), Some(model)) => model.open(id),
+                _ => NSBeep(),
+            },
+            key::DELETE | key::FORWARD_DELETE => match selected {
+                Some(id) => self.remove(id),
+                None => NSBeep(),
+            },
+            key::ESCAPE => {
+                if let Some(window) = self.window() {
+                    // SAFETY: `cancelOperation:` takes one object argument;
+                    // the shelf panel hides itself in response.
+                    let _: () = unsafe { msg_send![&*window, cancelOperation: None::<&AnyObject>] };
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// Moves the selection by `delta` tiles; with nothing selected, starts
+    /// at the first (down) or last (up) tile.
+    fn move_selection(&self, delta: isize) {
+        let next = {
+            let order = self.ivars().order.borrow();
+            if order.is_empty() {
+                return;
+            }
+            let last = order.len() as isize - 1;
+            let index = match self
+                .ivars()
+                .selected
+                .get()
+                .and_then(|id| order.iter().position(|o| *o == id))
+            {
+                Some(index) => (index as isize + delta).clamp(0, last),
+                None if delta > 0 => 0,
+                None => last,
+            };
+            order[index as usize]
+        };
+        self.select(Some(next));
+    }
+
+    fn tiles(&self) -> Vec<Retained<TileView>> {
+        self.ivars()
+            .list
+            .arrangedSubviews()
+            .iter()
+            .filter_map(|view| view.downcast::<TileView>().ok())
+            .collect()
+    }
+
+    fn selected_tile(&self) -> Option<Retained<TileView>> {
+        let id = self.ivars().selected.get()?;
+        self.tiles().into_iter().find(|tile| tile.entry_id() == id)
+    }
+
+    fn preview_urls(&self) -> Vec<Retained<objc2_foundation::NSURL>> {
+        match (self.ivars().selected.get(), self.ivars().model.upgrade()) {
+            (Some(id), Some(model)) => model.preview_urls(id),
+            _ => Vec::new(),
+        }
+    }
+
+    fn with_preview_panel<R>(&self, f: impl FnOnce(&QLPreviewPanel) -> R) -> Option<R> {
+        // SAFETY: Called on the main thread.
+        let panel = unsafe { QLPreviewPanel::sharedPreviewPanel(self.mtm()) }?;
+        Some(f(&panel))
     }
 
     fn set_highlighted(&self, highlighted: bool) {
@@ -246,303 +566,4 @@ impl FlippedView {
         // SAFETY: `FlippedView` has no ivars; NSView's `init` is fine.
         unsafe { msg_send![Self::alloc(mtm), init] }
     }
-}
-
-pub struct TileIvars {
-    entry_id: Uuid,
-    is_stack: bool,
-    model: Weak<ShelfModel>,
-    icon: OnceCell<Retained<NSImageView>>,
-    /// Set while the mouse is down and a drag was attempted, so one press
-    /// starts at most one drag session.
-    dragging: Cell<bool>,
-}
-
-define_class!(
-    // SAFETY:
-    // - NSView has no special subclassing requirements.
-    // - `TileView` does not implement `Drop`.
-    #[unsafe(super(NSView, NSResponder, NSObject))]
-    #[thread_kind = MainThreadOnly]
-    #[name = "YoinksShelfTile"]
-    #[ivars = TileIvars]
-    struct TileView;
-
-    impl TileView {
-        // The shelf panel never activates the app; react to the first click.
-        #[unsafe(method(acceptsFirstMouse:))]
-        fn accepts_first_mouse(&self, _event: Option<&NSEvent>) -> bool {
-            true
-        }
-
-        // The icon and label are decoration: the tile handles every click on
-        // it. Otherwise AppKit asks the image view or label whether it
-        // accepts the first click into an inactive panel, they say no, and
-        // the click is swallowed.
-        #[unsafe(method_id(hitTest:))]
-        fn hit_test(&self, point: NSPoint) -> Option<Retained<NSView>> {
-            // SAFETY: Calling the superclass implementation of the same method.
-            let hit: Option<Retained<NSView>> = unsafe { msg_send![super(self), hitTest: point] };
-            hit.map(|_| Retained::into_super(self.retain()))
-        }
-
-        #[unsafe(method(mouseDown:))]
-        fn mouse_down(&self, event: &NSEvent) {
-            self.ivars().dragging.set(false);
-            if event.clickCount() == 2 {
-                self.with_model(|model, id| model.open(id));
-            }
-        }
-
-        #[unsafe(method(mouseDragged:))]
-        fn mouse_dragged(&self, event: &NSEvent) {
-            if !self.ivars().dragging.replace(true) {
-                self.begin_drag(event);
-            }
-        }
-
-        #[unsafe(method(mouseUp:))]
-        fn mouse_up(&self, _event: &NSEvent) {
-            self.ivars().dragging.set(false);
-        }
-
-        #[unsafe(method_id(menuForEvent:))]
-        fn menu_for_event(&self, _event: &NSEvent) -> Option<Retained<NSMenu>> {
-            Some(self.context_menu())
-        }
-
-        #[unsafe(method(openItem:))]
-        fn open_item(&self, _sender: Option<&AnyObject>) {
-            self.with_model(|model, id| model.open(id));
-        }
-
-        #[unsafe(method(revealItem:))]
-        fn reveal_item(&self, _sender: Option<&AnyObject>) {
-            self.with_model(|model, id| model.reveal(id));
-        }
-
-        #[unsafe(method(unstackItem:))]
-        fn unstack_item(&self, _sender: Option<&AnyObject>) {
-            self.with_model(|model, id| model.unstack(id));
-        }
-
-        #[unsafe(method(removeItem:))]
-        fn remove_item(&self, _sender: Option<&AnyObject>) {
-            self.with_model(|model, id| model.remove(id));
-        }
-    }
-
-    // SAFETY: `NSObjectProtocol` has no safety requirements.
-    unsafe impl NSObjectProtocol for TileView {}
-
-    // SAFETY: The method signatures match the protocol.
-    unsafe impl NSDraggingSource for TileView {
-        // Offer everything Finder understands and let it apply its usual
-        // rules: move on the same volume, copy across volumes, Option to
-        // copy, Command to move, Option-Command to make an alias. Dropping
-        // back onto the shelf itself is refused.
-        #[unsafe(method(draggingSession:sourceOperationMaskForDraggingContext:))]
-        fn source_operation_mask(
-            &self,
-            _session: &NSDraggingSession,
-            context: NSDraggingContext,
-        ) -> NSDragOperation {
-            if context == NSDraggingContext::WithinApplication {
-                NSDragOperation::None
-            } else {
-                NSDragOperation::Copy
-                    | NSDragOperation::Move
-                    | NSDragOperation::Generic
-                    | NSDragOperation::Link
-            }
-        }
-
-        #[unsafe(method(draggingSession:endedAtPoint:operation:))]
-        fn dragging_ended(
-            &self,
-            _session: &NSDraggingSession,
-            _point: NSPoint,
-            operation: NSDragOperation,
-        ) {
-            self.ivars().dragging.set(false);
-            if operation != NSDragOperation::None {
-                // Removing the entry takes this tile out of the view
-                // hierarchy; keep it alive until this method returns.
-                let _alive = self.retain();
-                self.with_model(|model, id| model.dragged_out(id));
-            }
-        }
-    }
-);
-
-impl TileView {
-    fn new(mtm: MainThreadMarker, entry: &Entry, model: Weak<ShelfModel>) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(TileIvars {
-            entry_id: entry.id,
-            is_stack: entry.is_stack(),
-            model,
-            icon: OnceCell::new(),
-            dragging: Cell::new(false),
-        });
-        // SAFETY: NSView's `init` calls the designated `initWithFrame:`.
-        let this: Retained<Self> = unsafe { msg_send![super(this), init] };
-
-        let image_view = NSImageView::imageViewWithImage(&icon(entry), mtm);
-        image_view.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
-        // Image views accept image drops when editable; keep drops going to
-        // the shelf.
-        image_view.unregisterDraggedTypes();
-        let _ = this.ivars().icon.set(image_view.clone());
-
-        let label = NSTextField::wrappingLabelWithString(&NSString::from_str(&entry.title()), mtm);
-        label.setFont(Some(&NSFont::systemFontOfSize(11.0)));
-        label.setAlignment(NSTextAlignment::Center);
-        label.setMaximumNumberOfLines(2);
-        label.setPreferredMaxLayoutWidth(TILE_WIDTH - 8.0);
-        if let Some(cell) = label.cell() {
-            cell.setTruncatesLastVisibleLine(true);
-        }
-        if entry.has_pending() {
-            label.setTextColor(Some(&NSColor::secondaryLabelColor()));
-        }
-
-        let column = NSStackView::stackViewWithViews(
-            &NSArray::from_slice(&[&*image_view as &NSView, &*label]),
-            mtm,
-        );
-        column.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
-        column.setAlignment(NSLayoutAttribute::CenterX);
-        column.setSpacing(2.0);
-        this.addSubview(&column);
-
-        let views: [&NSView; 4] = [&this, &column, &image_view, &label];
-        for view in views {
-            view.setTranslatesAutoresizingMaskIntoConstraints(false);
-        }
-        NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[
-            this.widthAnchor().constraintEqualToConstant(TILE_WIDTH),
-            image_view
-                .widthAnchor()
-                .constraintEqualToConstant(ICON_SIZE),
-            image_view
-                .heightAnchor()
-                .constraintEqualToConstant(ICON_SIZE),
-            label
-                .widthAnchor()
-                .constraintLessThanOrEqualToConstant(TILE_WIDTH - 8.0),
-            column
-                .topAnchor()
-                .constraintEqualToAnchor(&this.topAnchor()),
-            column
-                .bottomAnchor()
-                .constraintEqualToAnchor(&this.bottomAnchor()),
-            column
-                .centerXAnchor()
-                .constraintEqualToAnchor(&this.centerXAnchor()),
-        ]));
-
-        let tooltip: Vec<&str> = entry.items.iter().map(|item| item.title.as_str()).collect();
-        this.setToolTip(Some(&NSString::from_str(&tooltip.join("\n"))));
-        this
-    }
-
-    /// Starts dragging every item of this entry out of the shelf, each with
-    /// the tile's icon, fanned out slightly for stacks.
-    fn begin_drag(&self, event: &NSEvent) {
-        let Some(model) = self.ivars().model.upgrade() else {
-            return;
-        };
-        let (image, frame) = match self.ivars().icon.get() {
-            Some(icon) => (
-                icon.image(),
-                icon.convertRect_toView(icon.bounds(), Some(self)),
-            ),
-            None => (None, self.bounds()),
-        };
-        let items: Vec<Retained<NSDraggingItem>> = model
-            .drag_items(self.ivars().entry_id)
-            .iter()
-            .filter_map(|item| pasteboard::writer(self.mtm(), item))
-            .enumerate()
-            .map(|(index, writer)| {
-                let item =
-                    NSDraggingItem::initWithPasteboardWriter(NSDraggingItem::alloc(), &writer);
-                let offset = index.min(4) as f64 * 4.0;
-                let frame = NSRect::new(
-                    NSPoint::new(frame.origin.x + offset, frame.origin.y - offset),
-                    frame.size,
-                );
-                let contents = image.as_deref().map(|image| image.as_ref());
-                // SAFETY: `contents` is an NSImage, as the API expects.
-                unsafe { item.setDraggingFrame_contents(frame, contents) };
-                item
-            })
-            .collect();
-        if !items.is_empty() {
-            self.beginDraggingSessionWithItems_event_source(
-                &NSArray::from_retained_slice(&items),
-                event,
-                ProtocolObject::from_ref(self),
-            );
-        }
-    }
-
-    fn with_model(&self, f: impl FnOnce(&ShelfModel, Uuid)) {
-        if let Some(model) = self.ivars().model.upgrade() {
-            f(&model, self.ivars().entry_id);
-        }
-    }
-
-    fn context_menu(&self) -> Retained<NSMenu> {
-        let mtm = self.mtm();
-        let menu = NSMenu::new(mtm);
-        menu.setAutoenablesItems(false);
-        let target = Some::<&AnyObject>(self);
-        menu.addItem(&menu_item(mtm, "Open", sel!(openItem:), "", target));
-        menu.addItem(&menu_item(
-            mtm,
-            "Reveal in Finder",
-            sel!(revealItem:),
-            "",
-            target,
-        ));
-        if self.ivars().is_stack {
-            menu.addItem(&menu_item(mtm, "Unstack", sel!(unstackItem:), "", target));
-        }
-        menu.addItem(&objc2_app_kit::NSMenuItem::separatorItem(mtm));
-        menu.addItem(&menu_item(mtm, "Remove", sel!(removeItem:), "", target));
-        menu
-    }
-}
-
-/// Stacks get Finder's multi-document icon; images show themselves; files
-/// show their Finder icon. Real thumbnails arrive in Phase 6.
-fn icon(entry: &Entry) -> Retained<NSImage> {
-    let workspace = NSWorkspace::sharedWorkspace();
-    if entry.has_pending()
-        && let Some(symbol) = NSImage::imageWithSystemSymbolName_accessibilityDescription(
-            ns_string!("arrow.down.circle"),
-            Some(ns_string!("Receiving")),
-        )
-    {
-        return symbol;
-    }
-    if entry.is_stack() {
-        let paths: Vec<Retained<NSString>> = entry
-            .items
-            .iter()
-            .map(|item| NSString::from_str(&item.path.to_string_lossy()))
-            .collect();
-        if let Some(icon) = workspace.iconForFiles(&NSArray::from_retained_slice(&paths)) {
-            return icon;
-        }
-    }
-    let item = &entry.items[0];
-    let path = NSString::from_str(&item.path.to_string_lossy());
-    if item.kind == ItemKind::Image
-        && let Some(image) = NSImage::initWithContentsOfFile(NSImage::alloc(), &path)
-    {
-        return image;
-    }
-    workspace.iconForFile(&path)
 }

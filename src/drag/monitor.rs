@@ -130,8 +130,8 @@ impl DragMonitor {
         }
         match self.settings.appear_on_drag {
             AppearMode::Off => return,
-            AppearMode::AtEdge => self.shelf.show(),
-            AppearMode::AtCursor => self.shelf.show_at_cursor(),
+            AppearMode::AtEdge => self.shelf.appear_at_edge(),
+            AppearMode::AtCursor => self.shelf.appear_at_cursor(),
             AppearMode::NearEdge => {
                 let near = self.shelf.screen_under_cursor().is_some_and(|screen| {
                     near_edge(screen, NSEvent::mouseLocation(), self.shelf.edge())
@@ -139,7 +139,7 @@ impl DragMonitor {
                 if !near {
                     return;
                 }
-                self.shelf.show();
+                self.shelf.appear_at_edge();
             }
         }
         session.shown = true;

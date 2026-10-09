@@ -3,26 +3,35 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 use std::rc::{Rc, Weak};
 
 use block2::RcBlock;
+use objc2::AnyThread;
 use objc2::rc::Retained;
-use objc2_app_kit::{NSPasteboard, NSWorkspace};
-use objc2_foundation::{MainThreadMarker, NSArray, NSDictionary, NSError, NSOperationQueue, NSURL};
+use objc2_app_kit::{NSAttributedStringAppKitDocumentFormats, NSPasteboard, NSWorkspace};
+use objc2_foundation::{
+    MainThreadMarker, NSArray, NSDictionary, NSError, NSOperationQueue, NSString, NSURL,
+};
+use objc2_uniform_type_identifiers::UTType;
 use uuid::Uuid;
 
 use super::bookmark;
+use super::describe::{self, FileFacts};
 use super::item::{Entry, Item, ItemKind, file_name};
 use super::materialize::ItemsDir;
 use super::pasteboard::{self, Dropped};
 use super::recent::Recent;
 use super::store::{JsonFile, ShelfStore};
+use super::thumbnail::Thumbnails;
 use super::view::ShelfContentView;
 
 pub struct ShelfModel {
+    /// Handed to views and background work that call back into the model.
+    this: Weak<ShelfModel>,
     store: RefCell<ShelfStore>,
+    thumbnails: Thumbnails,
     items_dir: ItemsDir,
     view: Retained<ShelfContentView>,
     /// Entries dragged out of the shelf, most recent first, for recall.
@@ -40,7 +49,9 @@ impl ShelfModel {
         items_dir.clean_incoming();
         let store = load_store(&data_dir.join("shelf.json"));
         let model = Rc::new_cyclic(|weak: &Weak<Self>| Self {
+            this: weak.clone(),
             store: RefCell::new(store),
+            thumbnails: Thumbnails::new(data_dir.join("Thumbnails")),
             items_dir,
             view: ShelfContentView::new(mtm, weak.clone()),
             recent: RefCell::default(),
@@ -59,6 +70,7 @@ impl ShelfModel {
             .flat_map(|entry| entry.items.iter().map(|item| item.id))
             .collect();
         model.items_dir.remove_orphans(&live);
+        model.thumbnails.remove_orphans(&live);
         model.reload();
         model
     }
@@ -123,6 +135,7 @@ impl ShelfModel {
             }
         } else {
             let removed = self.store.borrow_mut().remove(id);
+            // Thumbnails are kept while the entry can still be recalled.
             let evicted = removed.and_then(|entry| self.recent.borrow_mut().push(entry));
             if let Some(evicted) = evicted {
                 self.delete_files(&[evicted]);
@@ -135,6 +148,30 @@ impl ShelfModel {
     /// shelf. Returns false if there was nothing usable.
     pub fn accept_clipboard(self: &Rc<Self>) -> bool {
         self.accept(pasteboard::read(&NSPasteboard::generalPasteboard()))
+    }
+
+    /// The cached Quick Look thumbnail for `item`; if there is none yet,
+    /// one is generated in the background and the view reloads when ready.
+    pub fn thumbnail(&self, mtm: MainThreadMarker, item: &Item) -> Option<PathBuf> {
+        self.thumbnails.get_or_request(mtm, item, &self.this)
+    }
+
+    pub(super) fn thumbnail_finished(&self, _id: Uuid, ok: bool) {
+        if ok {
+            self.reload();
+        }
+    }
+
+    /// Hover text for a tile: names, kinds, sizes, locations, text excerpts.
+    pub fn tooltip(&self, entry: &Entry) -> String {
+        let facts: Vec<FileFacts> = entry.items.iter().map(file_facts).collect();
+        let home = std::env::home_dir();
+        describe::tooltip(entry, &facts, home.as_deref())
+    }
+
+    /// File URLs to show in Quick Look for entry `id`.
+    pub fn preview_urls(&self, id: Uuid) -> Vec<Retained<NSURL>> {
+        self.urls(id, false)
     }
 
     pub fn can_recall(&self) -> bool {
@@ -297,7 +334,7 @@ impl ShelfModel {
             .filter_map(|item| match &item.kind {
                 ItemKind::Pending => None,
                 ItemKind::Url { url } if web_links => {
-                    NSURL::URLWithString(&objc2_foundation::NSString::from_str(url))
+                    NSURL::URLWithString(&NSString::from_str(url))
                 }
                 _ => NSURL::from_file_path(&item.path),
             })
@@ -306,6 +343,7 @@ impl ShelfModel {
 
     fn delete_files(&self, entries: &[Entry]) {
         for item in entries.iter().flat_map(|entry| &entry.items) {
+            self.thumbnails.remove(item.id);
             if let Err(error) = self.items_dir.delete(item) {
                 eprintln!("yoinks: could not delete {}: {error}", item.path.display());
             }
@@ -338,7 +376,7 @@ impl ShelfModel {
     fn reload(&self) {
         self.revision.set(self.revision.get() + 1);
         let store = self.store.borrow();
-        self.view.reload(store.entries());
+        self.view.reload(self, store.entries());
     }
 }
 
@@ -352,5 +390,48 @@ fn load_store(path: &Path) -> ShelfStore {
             let _ = fs::rename(path, path.with_extension("json.corrupt"));
             ShelfStore::empty(Box::new(JsonFile::new(path.to_path_buf())))
         }
+    }
+}
+
+/// Size, kind and (for text) an excerpt of an item's file.
+fn file_facts(item: &Item) -> FileFacts {
+    if item.kind == ItemKind::Pending {
+        return FileFacts::default();
+    }
+    let metadata = fs::metadata(&item.path).ok();
+    let is_dir = metadata.as_ref().is_some_and(|m| m.is_dir());
+    let size = metadata.filter(|m| m.is_file()).map(|m| m.len());
+    let kind = if is_dir {
+        Some("Folder".to_owned())
+    } else {
+        item.path
+            .extension()
+            .and_then(|ext| {
+                UTType::typeWithFilenameExtension(&NSString::from_str(&ext.to_string_lossy()))
+            })
+            .and_then(|uti| uti.localizedDescription())
+            .map(|kind| kind.to_string())
+    };
+    let excerpt = match item.kind {
+        ItemKind::Text => fs::read_to_string(&item.path).ok(),
+        ItemKind::RichText => fs::read(&item.path).ok().and_then(|bytes| {
+            let data = objc2_foundation::NSData::from_vec(bytes);
+            // SAFETY: Passing no document attributes out-parameter is allowed.
+            let text = unsafe {
+                objc2_foundation::NSAttributedString::initWithRTF_documentAttributes(
+                    objc2_foundation::NSAttributedString::alloc(),
+                    &data,
+                    None,
+                )
+            };
+            text.map(|text| text.string().to_string())
+        }),
+        _ => None,
+    }
+    .map(|text| describe::excerpt(&text));
+    FileFacts {
+        size,
+        kind,
+        excerpt,
     }
 }

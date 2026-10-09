@@ -112,6 +112,9 @@ impl Shelf {
     pub fn new(mtm: MainThreadMarker, edge: ShelfEdge, model: Rc<ShelfModel>) -> Self {
         let panel = ShelfPanel::new(mtm);
         panel.setContentView(Some(model.view()));
+        // Keyboard input (Space for Quick Look, arrows, Delete) goes to the
+        // content view.
+        panel.makeFirstResponder(Some(model.view()));
         Self {
             panel,
             model,
@@ -152,19 +155,34 @@ impl Shelf {
         }
     }
 
-    /// Slides the shelf in at its screen edge.
+    /// Slides the shelf in at its screen edge and gives it keyboard focus,
+    /// for when the user asked for it (shortcut, menu, relaunch).
     pub fn show(&self) {
-        self.present(|visible, _| shelf_frames(visible, self.edge));
+        self.present(|visible, _| shelf_frames(visible, self.edge), true);
     }
 
-    /// Fades the shelf in beside the cursor.
-    pub fn show_at_cursor(&self) {
-        self.present(|visible, cursor| cursor_frames(visible, cursor, self.edge));
+    /// Slides the shelf in at its screen edge without taking keyboard focus,
+    /// for automatic appearance during a drag: typing must keep going to the
+    /// app the user is working in.
+    pub fn appear_at_edge(&self) {
+        self.present(|visible, _| shelf_frames(visible, self.edge), false);
+    }
+
+    /// Fades the shelf in beside the cursor, without taking keyboard focus.
+    pub fn appear_at_cursor(&self) {
+        self.present(
+            |visible, cursor| cursor_frames(visible, cursor, self.edge),
+            false,
+        );
     }
 
     /// Shows the shelf on the screen under the cursor, placed by `layout`
-    /// from that screen's visible frame and the cursor position.
-    fn present(&self, layout: impl FnOnce(NSRect, NSPoint) -> ShelfFrames) {
+    /// from that screen's visible frame and the cursor position. With
+    /// `focus`, the panel also becomes key (it never activates the app).
+    fn present(&self, layout: impl FnOnce(NSRect, NSPoint) -> ShelfFrames, focus: bool) {
+        if focus {
+            self.panel.makeKeyWindow();
+        }
         match self.visibility.get() {
             Visibility::Shown => {}
             Visibility::Hiding => {
@@ -190,7 +208,9 @@ impl Shelf {
                 self.panel.setFrame_display(start, false);
                 self.panel.setAlphaValue(0.0);
                 self.panel.orderFrontRegardless();
-                self.panel.makeKeyWindow();
+                if focus {
+                    self.panel.makeKeyWindow();
+                }
                 self.animate(frames.shown, 1.0, None);
             }
         }
