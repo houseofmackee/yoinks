@@ -8,12 +8,13 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSApplication, NSApplicationDelegate, NSMenuItem, NSMenuItemValidation, NSStatusItem,
+    NSApplication, NSApplicationDelegate, NSBeep, NSMenuItem, NSMenuItemValidation, NSStatusItem,
 };
 use objc2_foundation::{MainThreadMarker, NSNotification, ns_string};
 
 use super::status_item;
 use crate::drag::DragMonitor;
+use crate::hotkey::{Gesture, HotKey};
 use crate::paths;
 use crate::settings::Settings;
 use crate::shelf::{Shelf, ShelfModel};
@@ -23,6 +24,7 @@ pub struct Ivars {
     shelf: OnceCell<Rc<Shelf>>,
     status_item: OnceCell<Retained<NSStatusItem>>,
     drag_monitor: OnceCell<Option<Rc<DragMonitor>>>,
+    hotkey: OnceCell<Rc<HotKey>>,
 }
 
 define_class!(
@@ -49,10 +51,22 @@ define_class!(
             model.set_keep_after_drag_out(settings.keep_after_drag_out);
             let shelf = Rc::new(Shelf::new(mtm, settings.shelf_edge, model));
             let drag_monitor = DragMonitor::start(Rc::clone(&shelf), &settings);
+            let shortcut = settings.shortcut();
+            if let Some(shortcut) = &shortcut {
+                let target = Rc::clone(&shelf);
+                match HotKey::register(shortcut, move |gesture| on_gesture(&target, gesture)) {
+                    Ok(hotkey) => {
+                        let _ = self.ivars().hotkey.set(hotkey);
+                    }
+                    Err(error) => eprintln!("yoinks: {error}"),
+                }
+            }
             let ivars = self.ivars();
             let _ = ivars.shelf.set(shelf);
             let _ = ivars.drag_monitor.set(drag_monitor);
-            let _ = ivars.status_item.set(status_item::build(mtm, self));
+            let _ = ivars
+                .status_item
+                .set(status_item::build(mtm, self, shortcut.as_ref()));
         }
 
         // Launching the app again (Finder, Spotlight, `open`) shows the shelf.
@@ -100,9 +114,12 @@ define_class!(
 
         #[unsafe(method(recallItems:))]
         fn recall_items(&self, _sender: Option<&AnyObject>) {
-            if self.shelf().model().recall() {
-                self.shelf().show();
-            }
+            on_gesture(self.shelf(), Gesture::LongPress);
+        }
+
+        #[unsafe(method(addClipboard:))]
+        fn add_clipboard(&self, _sender: Option<&AnyObject>) {
+            on_gesture(self.shelf(), Gesture::DoublePress);
         }
 
         #[unsafe(method(hideShelf:))]
@@ -124,5 +141,23 @@ impl AppDelegate {
             .shelf
             .get()
             .expect("shelf is created in applicationDidFinishLaunching")
+    }
+}
+
+/// The shortcut's gestures, also used by the matching menu items. Beeps when
+/// there is nothing to recall or nothing usable on the clipboard.
+fn on_gesture(shelf: &Shelf, gesture: Gesture) {
+    let done = match gesture {
+        Gesture::Press => {
+            shelf.toggle();
+            true
+        }
+        Gesture::LongPress => shelf.model().recall(),
+        Gesture::DoublePress => shelf.model().accept_clipboard(),
+    };
+    if !done {
+        NSBeep();
+    } else if gesture != Gesture::Press {
+        shelf.show();
     }
 }

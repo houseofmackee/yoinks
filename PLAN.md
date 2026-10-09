@@ -59,7 +59,10 @@ src/
     watcher.rs       NSPasteboard changeCount polling
     history.rs       bounded ring buffer + persistence
     filters.rs       password manager and ignored-app rules
-  hotkey.rs          global shortcut: press, long press, double press
+  hotkey/
+    shortcut.rs      parse "control+option+Y" into Carbon key code + modifiers
+    gesture.rs       pure press / long press / double press state machine
+    carbon.rs        RegisterEventHotKey registration and dispatch
   preview.rs         thumbnails and QuickLook panel
   settings.rs        typed settings with serde defaults (settings.json)
   settings/          (Phase 8) preferences UI
@@ -160,12 +163,27 @@ Key design points:
   folder with serde defaults, written on first launch. Changes take effect
   on relaunch until the Preferences window exists.
 
-### Phase 5: Global keyboard shortcut
-- Configurable hotkey (default ⌃⌥Y) with three gestures:
-  - **Press:** toggle the shelf.
-  - **Long press:** recall the items most recently dragged out.
-  - **Double press:** save the current clipboard contents to the shelf.
-- Shortcut recorder control in Preferences.
+### Phase 5: Global keyboard shortcut (done)
+- [x] `hotkey` setting, default `control+option+Y` (`null` turns it off),
+  registered with Carbon `RegisterEventHotKey`: no Accessibility or Input
+  Monitoring permission needed.
+- [x] Gestures from a pure, tested state machine:
+  - **Press:** toggle the shelf (reported once the 250 ms double-press
+    window has passed).
+  - **Long press** (500 ms): recall the most recently dragged-out entry.
+  - **Double press:** add the clipboard contents to the shelf.
+  - Long and double press beep when there is nothing to recall or nothing
+    usable on the clipboard.
+- [x] Menu bar: "Add Clipboard to Shelf" item; the shortcut is shown next
+  to Show/Hide Shelf.
+- Shortcuts are written as text (`control+option+Y`, `cmd+shift+K`,
+  `F5`): letters, digits, ANSI symbols, Space and F1 to F12; at least one
+  modifier unless it is a function key. Invalid values are reported and
+  ignored.
+- Known limit: macOS does not report a clash with another app's shortcut;
+  both apps receive it. The Phase 8 recorder should warn about common
+  system shortcuts.
+- Shortcut recorder control: Phase 8.
 
 ### Phase 6: Previews
 - Tile thumbnails via `QLThumbnailGenerator`, cached on disk.

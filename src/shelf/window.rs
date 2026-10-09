@@ -121,7 +121,7 @@ impl Shelf {
         }
     }
 
-    pub fn model(&self) -> &ShelfModel {
+    pub fn model(&self) -> &Rc<ShelfModel> {
         &self.model
     }
 

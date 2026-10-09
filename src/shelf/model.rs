@@ -9,14 +9,14 @@ use std::rc::{Rc, Weak};
 
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2_app_kit::NSWorkspace;
+use objc2_app_kit::{NSPasteboard, NSWorkspace};
 use objc2_foundation::{MainThreadMarker, NSArray, NSDictionary, NSError, NSOperationQueue, NSURL};
 use uuid::Uuid;
 
 use super::bookmark;
 use super::item::{Entry, Item, ItemKind, file_name};
 use super::materialize::ItemsDir;
-use super::pasteboard::Dropped;
+use super::pasteboard::{self, Dropped};
 use super::recent::Recent;
 use super::store::{JsonFile, ShelfStore};
 use super::view::ShelfContentView;
@@ -129,6 +129,12 @@ impl ShelfModel {
             }
         }
         self.reload();
+    }
+
+    /// Adds whatever is on the clipboard (files, text, links, images) to the
+    /// shelf. Returns false if there was nothing usable.
+    pub fn accept_clipboard(self: &Rc<Self>) -> bool {
+        self.accept(pasteboard::read(&NSPasteboard::generalPasteboard()))
     }
 
     pub fn can_recall(&self) -> bool {
