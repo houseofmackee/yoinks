@@ -6,6 +6,7 @@
 compile_error!("yoinks only supports macOS");
 
 mod app;
+mod clipboard;
 mod drag;
 mod hotkey;
 mod paths;

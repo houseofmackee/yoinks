@@ -8,10 +8,10 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSApplication, NSBeep, NSColor, NSDragOperation, NSDraggingInfo, NSEvent, NSEventType,
-    NSLayoutAttribute, NSLayoutConstraint, NSResponder, NSScrollView, NSStackView, NSTextAlignment,
-    NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSVisualEffectBlendingMode,
-    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindowDelegate,
+    NSBeep, NSColor, NSDragOperation, NSDraggingInfo, NSEvent, NSEventType, NSLayoutAttribute,
+    NSLayoutConstraint, NSResponder, NSScrollView, NSStackView, NSTextAlignment, NSTextField,
+    NSUserInterfaceLayoutOrientation, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
+    NSVisualEffectState, NSVisualEffectView, NSWindowDelegate,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSEdgeInsets, NSInteger, NSObject, NSObjectProtocol, NSPoint,
@@ -432,8 +432,7 @@ impl ShelfContentView {
             window.makeKeyWindow();
             window.makeFirstResponder(Some(self));
         }
-        #[allow(deprecated)]
-        NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
+        crate::ui::activate_app(mtm);
         self.with_preview_panel(|panel| panel.makeKeyAndOrderFront(None));
     }
 

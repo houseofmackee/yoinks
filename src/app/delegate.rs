@@ -8,11 +8,13 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSApplication, NSApplicationDelegate, NSBeep, NSMenuItem, NSMenuItemValidation, NSStatusItem,
+    NSApplication, NSApplicationDelegate, NSBeep, NSControlStateValueOff, NSControlStateValueOn,
+    NSMenuItem, NSMenuItemValidation, NSStatusItem,
 };
 use objc2_foundation::{MainThreadMarker, NSNotification, ns_string};
 
 use super::status_item;
+use crate::clipboard::{ClipboardHistory, HistoryList};
 use crate::drag::DragMonitor;
 use crate::hotkey::{Gesture, HotKey};
 use crate::paths;
@@ -25,6 +27,8 @@ pub struct Ivars {
     status_item: OnceCell<Retained<NSStatusItem>>,
     drag_monitor: OnceCell<Option<Rc<DragMonitor>>>,
     hotkey: OnceCell<Rc<HotKey>>,
+    clipboard: OnceCell<Rc<ClipboardHistory>>,
+    history_list: OnceCell<Retained<HistoryList>>,
 }
 
 define_class!(
@@ -61,6 +65,18 @@ define_class!(
                     Err(error) => eprintln!("yoinks: {error}"),
                 }
             }
+            if let Some(clipboard) = ClipboardHistory::start(&data_dir, &settings) {
+                let target = Rc::clone(&shelf);
+                let list = HistoryList::new(mtm, &clipboard, move |dropped| {
+                    if target.model().accept(dropped) {
+                        target.show();
+                    } else {
+                        NSBeep();
+                    }
+                });
+                let _ = self.ivars().clipboard.set(clipboard);
+                let _ = self.ivars().history_list.set(list);
+            }
             let ivars = self.ivars();
             let _ = ivars.shelf.set(shelf);
             let _ = ivars.drag_monitor.set(drag_monitor);
@@ -90,7 +106,17 @@ define_class!(
                 });
             }
             let model = self.shelf().model();
-            if action == Some(sel!(clearShelf:)) {
+            let clipboard = self.ivars().clipboard.get();
+            if action == Some(sel!(showClipboardHistory:))
+                || action == Some(sel!(toggleClipboardPause:))
+            {
+                item.setHidden(clipboard.is_none());
+                if action == Some(sel!(toggleClipboardPause:)) {
+                    let paused = clipboard.is_some_and(|c| c.is_paused());
+                    item.setState(if paused { NSControlStateValueOn } else { NSControlStateValueOff });
+                }
+                clipboard.is_some()
+            } else if action == Some(sel!(clearShelf:)) {
                 !model.is_empty()
             } else if action == Some(sel!(recallItems:)) {
                 model.can_recall()
@@ -120,6 +146,23 @@ define_class!(
         #[unsafe(method(addClipboard:))]
         fn add_clipboard(&self, _sender: Option<&AnyObject>) {
             on_gesture(self.shelf(), Gesture::DoublePress);
+        }
+
+        #[unsafe(method(showClipboardHistory:))]
+        fn show_clipboard_history(&self, _sender: Option<&AnyObject>) {
+            let mtm = self.mtm();
+            let ivars = self.ivars();
+            let button = ivars.status_item.get().and_then(|item| item.button(mtm));
+            if let (Some(list), Some(button)) = (ivars.history_list.get(), button) {
+                list.toggle(&button);
+            }
+        }
+
+        #[unsafe(method(toggleClipboardPause:))]
+        fn toggle_clipboard_pause(&self, _sender: Option<&AnyObject>) {
+            if let Some(clipboard) = self.ivars().clipboard.get() {
+                clipboard.set_paused(!clipboard.is_paused());
+            }
         }
 
         #[unsafe(method(hideShelf:))]

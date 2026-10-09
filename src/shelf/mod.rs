@@ -16,5 +16,8 @@ mod view;
 mod window;
 
 pub use geometry::ShelfEdge;
+pub use item::{file_name, unix_now};
+pub use materialize::{Content, text_title};
 pub use model::ShelfModel;
+pub use pasteboard::{Dropped, read as read_pasteboard};
 pub use window::Shelf;

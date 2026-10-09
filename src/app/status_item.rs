@@ -57,6 +57,14 @@ pub fn build(
         menu.addItem(&menu_item(mtm, title, action, "", target));
     }
     menu.addItem(&NSMenuItem::separatorItem(mtm));
+    // Both are hidden by the delegate when clipboard history is off.
+    for (title, action) in [
+        ("Clipboard History…", sel!(showClipboardHistory:)),
+        ("Pause Clipboard History", sel!(toggleClipboardPause:)),
+    ] {
+        menu.addItem(&menu_item(mtm, title, action, "", target));
+    }
+    menu.addItem(&NSMenuItem::separatorItem(mtm));
     menu.addItem(&menu_item(
         mtm,
         "Preferences…",

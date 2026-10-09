@@ -28,3 +28,15 @@ pub fn menu_item(
     unsafe { item.setTarget(target) };
     item
 }
+
+/// Brings this (normally background) app to the front, for UI the user
+/// explicitly asked for, such as the clipboard history or Quick Look.
+pub fn activate_app(mtm: MainThreadMarker) {
+    let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
+    if objc2::available!(macos = 14.0) {
+        app.activate();
+    } else {
+        #[allow(deprecated)]
+        app.activateIgnoringOtherApps(true);
+    }
+}

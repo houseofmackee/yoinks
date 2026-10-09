@@ -39,6 +39,13 @@ pub struct Settings {
     /// Press: show or hide the shelf. Long press: recall the last dragged
     /// item. Double press: add the clipboard to the shelf.
     pub hotkey: Option<String>,
+    /// Record copied text, links, images and files.
+    pub clipboard_history: bool,
+    /// How many unpinned clips to keep.
+    pub clipboard_history_size: usize,
+    /// Bundle identifiers of apps whose copies are never recorded (password
+    /// managers are always skipped).
+    pub clipboard_ignored_apps: Vec<String>,
 }
 
 impl Default for Settings {
@@ -49,6 +56,9 @@ impl Default for Settings {
             keep_after_drag_out: false,
             ignored_apps: Vec::new(),
             hotkey: Some(DEFAULT_HOTKEY.to_owned()),
+            clipboard_history: true,
+            clipboard_history_size: 50,
+            clipboard_ignored_apps: Vec::new(),
         }
     }
 }
