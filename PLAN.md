@@ -16,6 +16,8 @@ Spaces and full-screen apps.
 **Non-goals (for v1)**
 - iOS/iPadOS companion app and Handoff to iOS (revisit after v1).
 - Cross-platform support. The app is macOS-only by design.
+- Mac App Store distribution. v1 ships as a direct download only.
+- Syncing shelves across Macs (kept as a design option, see section 8).
 
 ## 2. Technology choices
 
@@ -67,7 +69,7 @@ Key design points:
   Background work (thumbnailing, file copies) runs on a worker pool and posts
   results back with `dispatch` main queue.
 - **Security-scoped bookmarks** for file items, so items survive renames and
-  moves, and so the app works when sandboxed (needed for the Mac App Store).
+  moves. This also keeps a future sandboxed build possible.
 - **Model/view split.** `ShelfStore` is plain Rust and unit-testable; the
   AppKit views observe it.
 
@@ -77,14 +79,18 @@ Key design points:
 - [x] `cargo init`, git repo, `objc2` dependencies.
 - [x] Accessory (no Dock icon) app with a menu bar status item and Quit.
 
-### Phase 1: The shelf window
-- Borderless `NSPanel` with `NSWindowStyleMask::NonactivatingPanel`, floating
+### Phase 1: The shelf window (done)
+- [x] Borderless `NSPanel` with `NSWindowStyleMask::NonactivatingPanel`, floating
   level, `canJoinAllSpaces` + `fullScreenAuxiliary` collection behavior so it
   appears over full-screen apps and on every Space.
-- Vibrancy background (`NSVisualEffectView`), rounded corners.
-- Show/hide with slide animation from a chosen screen edge (left/right),
-  respecting the active display and the notch/menu bar.
-- Status item menu: Show Shelf, Clear Shelf, Preferences, Quit.
+- [x] Vibrancy background (`NSVisualEffectView`), rounded corners.
+- [x] Show/hide with slide animation from a chosen screen edge (left/right),
+  on the display under the cursor, within the visible frame (clear of the
+  menu bar, notch and Dock). Fades instead of sliding when Reduce Motion is on.
+- [x] Escape hides the shelf; relaunching the app shows it.
+- [x] Status item menu: Show/Hide Shelf, Clear Shelf, Preferences, Quit.
+  Clear Shelf and Preferences stay disabled until Phases 2 and 8.
+- Until Preferences exist, the edge can be set with `YOINKS_SHELF_EDGE=left`.
 
 ### Phase 2: Drop in (accepting items)
 - Register the shelf as a drop target for file URLs, file promises
@@ -141,8 +147,9 @@ Key design points:
   - Built-in ignore list of popular password managers, plus a user
     "Ignored Apps" list.
   - One-click "Pause clipboard history" from the menu bar.
-- UI: popover from the status item. (Yoink uses a Notification Center widget;
-  a WidgetKit extension cannot be built in pure Rust, so it is a stretch goal.)
+- UI: popover from the status item.
+- Widget: a WidgetKit extension (Swift add-on, see Phase 9) showing recent
+  clipboard entries, like Yoink's Notification Center widget.
 
 ### Phase 8: Preferences
 - General: launch at login (`SMAppService.mainApp`), shelf edge, appearance
@@ -159,9 +166,13 @@ Key design points:
 - **URL scheme:** `yoinks://add?path=...` and `yoinks://show`.
 - **Services menu / Quick Action:** "Add to Yoinks" via `NSServices` in
   Info.plist, which also covers Automator workflows.
-- **Share extension:** requires an app extension target; plan as a small Swift
-  shim, or skip for v1.
-- **Shortcuts (App Intents):** stretch goal, also needs a Swift shim.
+- **Swift add-ons:** app extensions and App Intents cannot be built in pure
+  Rust, so they live in a small Swift package under `swift/`. They talk to the
+  Rust app through the URL scheme or the CLI socket, keeping the Swift side
+  thin. The Rust app remains the single source of truth.
+- **Share extension (Swift):** "Yoinks" in every Share menu.
+- **Shortcuts (Swift App Intents):** "Add to Shelf", "Get Shelf Items",
+  "Clear Shelf", "Show Shelf".
 - **Continuity Camera:** "Import from iPhone or iPad" in the shelf context
   menu via `NSMenuItem.importFromDeviceIdentifier` and the
   `NSServicesMenuRequestor` protocol.
@@ -170,9 +181,10 @@ Key design points:
 - `Info.plist` with `LSUIElement = true`, URL scheme, services, usage strings.
 - App icon (`.icns`) and template menu bar icon.
 - Hardened runtime, Developer ID signing, notarization via `notarytool`.
-- Optional App Sandbox build for the Mac App Store (needs bookmarks from
-  Phase 2 and entitlement review).
-- Auto-updates with Sparkle (via a small framework embed) for direct builds.
+- Direct download only: a signed, notarized `.dmg` hosted on GitHub Releases.
+- Auto-updates with Sparkle (via a small framework embed).
+- Build step that compiles the Swift add-ons and embeds them in
+  `Yoinks.app/Contents/PlugIns`.
 - GitHub Actions: `cargo fmt --check`, `cargo clippy -D warnings`,
   `cargo test`, universal binary (`aarch64` + `x86_64` with `lipo`).
 
@@ -201,7 +213,7 @@ Key design points:
 - **Integration tests** for the CLI and IPC socket.
 - **Manual QA checklist** per release: drag from Finder, Safari, Mail (file
   promises), Photos, Notes; full-screen apps; multiple displays; Spaces;
-  Stage Manager; external volumes; sandboxed build.
+  Stage Manager; external volumes.
 - Instruments pass for idle CPU and memory.
 
 ## 7. Milestones
@@ -215,9 +227,15 @@ Key design points:
 | M5: Ship | 10 | Signed, notarized `Yoinks.app` with CI |
 | M6: Beyond Yoink | Section 5 | Selected improvements, prioritized after M5 |
 
-## 8. Open questions
+## 8. Decisions and future options
 
-- Distribute through the Mac App Store (sandbox constraints) or direct only?
-- Is a small Swift shim acceptable for Share extension, widgets and App
-  Intents, or must the project stay 100% Rust?
-- Should iCloud sync of shelves across Macs be in scope?
+**Decided**
+- Distribution: direct download only for now. No Mac App Store build.
+- Swift: small Swift add-ons are acceptable for the Share extension,
+  widgets and Shortcuts (App Intents). Everything else stays in Rust.
+
+**Future design option: sharing shelves across Macs**
+- Not in scope yet. Keep the door open by giving every shelf item a stable
+  UUID and a modification timestamp, and by keeping `ShelfStore` persistence
+  behind a trait so a sync backend (iCloud via CloudKit, or a shared folder)
+  can be added later without reworking the model.
