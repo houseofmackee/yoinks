@@ -45,6 +45,10 @@ define_class!(
                 _ => ShelfEdge::default(),
             };
             let model = ShelfModel::new(mtm, &paths::data_dir());
+            // TODO(phase 8): read from settings instead of the environment.
+            model.set_keep_after_drag_out(
+                std::env::var_os("YOINKS_KEEP_AFTER_DRAG_OUT").is_some_and(|v| v == "1"),
+            );
             let _ = self.ivars().shelf.set(Shelf::new(mtm, edge, model));
             let _ = self.ivars().status_item.set(status_item::build(mtm, self));
         }
@@ -69,7 +73,14 @@ define_class!(
                     ns_string!("Show Shelf")
                 });
             }
-            action != Some(sel!(clearShelf:)) || !self.shelf().model().is_empty()
+            let model = self.shelf().model();
+            if action == Some(sel!(clearShelf:)) {
+                !model.is_empty()
+            } else if action == Some(sel!(recallItems:)) {
+                model.can_recall()
+            } else {
+                true
+            }
         }
     }
 
@@ -83,6 +94,13 @@ define_class!(
         #[unsafe(method(clearShelf:))]
         fn clear_shelf(&self, _sender: Option<&AnyObject>) {
             self.shelf().model().clear();
+        }
+
+        #[unsafe(method(recallItems:))]
+        fn recall_items(&self, _sender: Option<&AnyObject>) {
+            if self.shelf().model().recall() {
+                self.shelf().show();
+            }
         }
 
         #[unsafe(method(hideShelf:))]

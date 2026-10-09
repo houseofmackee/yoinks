@@ -1,19 +1,21 @@
 //! The shelf's content: a drop target holding a scrolling column of tiles.
 
+use std::cell::{Cell, OnceCell};
 use std::rc::Weak;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
+use objc2::{AnyThread, DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSColor, NSDragOperation, NSDraggingInfo, NSEvent, NSFont, NSImage, NSImageScaling,
-    NSImageView, NSLayoutAttribute, NSLayoutConstraint, NSMenu, NSResponder, NSScrollView,
-    NSStackView, NSTextAlignment, NSTextField, NSUserInterfaceLayoutOrientation, NSView,
-    NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
-    NSWorkspace,
+    NSColor, NSDragOperation, NSDraggingContext, NSDraggingInfo, NSDraggingItem, NSDraggingSession,
+    NSDraggingSource, NSEvent, NSFont, NSImage, NSImageScaling, NSImageView, NSLayoutAttribute,
+    NSLayoutConstraint, NSMenu, NSResponder, NSScrollView, NSStackView, NSTextAlignment,
+    NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSVisualEffectBlendingMode,
+    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWorkspace,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSArray, NSEdgeInsets, NSObject, NSPoint, NSRect, NSSize, NSString, ns_string,
+    MainThreadMarker, NSArray, NSEdgeInsets, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize,
+    NSString, ns_string,
 };
 use uuid::Uuid;
 
@@ -250,6 +252,10 @@ pub struct TileIvars {
     entry_id: Uuid,
     is_stack: bool,
     model: Weak<ShelfModel>,
+    icon: OnceCell<Retained<NSImageView>>,
+    /// Set while the mouse is down and a drag was attempted, so one press
+    /// starts at most one drag session.
+    dragging: Cell<bool>,
 }
 
 define_class!(
@@ -269,11 +275,35 @@ define_class!(
             true
         }
 
+        // The icon and label are decoration: the tile handles every click on
+        // it. Otherwise AppKit asks the image view or label whether it
+        // accepts the first click into an inactive panel, they say no, and
+        // the click is swallowed.
+        #[unsafe(method_id(hitTest:))]
+        fn hit_test(&self, point: NSPoint) -> Option<Retained<NSView>> {
+            // SAFETY: Calling the superclass implementation of the same method.
+            let hit: Option<Retained<NSView>> = unsafe { msg_send![super(self), hitTest: point] };
+            hit.map(|_| Retained::into_super(self.retain()))
+        }
+
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self, event: &NSEvent) {
+            self.ivars().dragging.set(false);
             if event.clickCount() == 2 {
                 self.with_model(|model, id| model.open(id));
             }
+        }
+
+        #[unsafe(method(mouseDragged:))]
+        fn mouse_dragged(&self, event: &NSEvent) {
+            if !self.ivars().dragging.replace(true) {
+                self.begin_drag(event);
+            }
+        }
+
+        #[unsafe(method(mouseUp:))]
+        fn mouse_up(&self, _event: &NSEvent) {
+            self.ivars().dragging.set(false);
         }
 
         #[unsafe(method_id(menuForEvent:))]
@@ -301,6 +331,48 @@ define_class!(
             self.with_model(|model, id| model.remove(id));
         }
     }
+
+    // SAFETY: `NSObjectProtocol` has no safety requirements.
+    unsafe impl NSObjectProtocol for TileView {}
+
+    // SAFETY: The method signatures match the protocol.
+    unsafe impl NSDraggingSource for TileView {
+        // Offer everything Finder understands and let it apply its usual
+        // rules: move on the same volume, copy across volumes, Option to
+        // copy, Command to move, Option-Command to make an alias. Dropping
+        // back onto the shelf itself is refused.
+        #[unsafe(method(draggingSession:sourceOperationMaskForDraggingContext:))]
+        fn source_operation_mask(
+            &self,
+            _session: &NSDraggingSession,
+            context: NSDraggingContext,
+        ) -> NSDragOperation {
+            if context == NSDraggingContext::WithinApplication {
+                NSDragOperation::None
+            } else {
+                NSDragOperation::Copy
+                    | NSDragOperation::Move
+                    | NSDragOperation::Generic
+                    | NSDragOperation::Link
+            }
+        }
+
+        #[unsafe(method(draggingSession:endedAtPoint:operation:))]
+        fn dragging_ended(
+            &self,
+            _session: &NSDraggingSession,
+            _point: NSPoint,
+            operation: NSDragOperation,
+        ) {
+            self.ivars().dragging.set(false);
+            if operation != NSDragOperation::None {
+                // Removing the entry takes this tile out of the view
+                // hierarchy; keep it alive until this method returns.
+                let _alive = self.retain();
+                self.with_model(|model, id| model.dragged_out(id));
+            }
+        }
+    }
 );
 
 impl TileView {
@@ -309,6 +381,8 @@ impl TileView {
             entry_id: entry.id,
             is_stack: entry.is_stack(),
             model,
+            icon: OnceCell::new(),
+            dragging: Cell::new(false),
         });
         // SAFETY: NSView's `init` calls the designated `initWithFrame:`.
         let this: Retained<Self> = unsafe { msg_send![super(this), init] };
@@ -318,6 +392,7 @@ impl TileView {
         // Image views accept image drops when editable; keep drops going to
         // the shelf.
         image_view.unregisterDraggedTypes();
+        let _ = this.ivars().icon.set(image_view.clone());
 
         let label = NSTextField::wrappingLabelWithString(&NSString::from_str(&entry.title()), mtm);
         label.setFont(Some(&NSFont::systemFontOfSize(11.0)));
@@ -369,6 +444,47 @@ impl TileView {
         let tooltip: Vec<&str> = entry.items.iter().map(|item| item.title.as_str()).collect();
         this.setToolTip(Some(&NSString::from_str(&tooltip.join("\n"))));
         this
+    }
+
+    /// Starts dragging every item of this entry out of the shelf, each with
+    /// the tile's icon, fanned out slightly for stacks.
+    fn begin_drag(&self, event: &NSEvent) {
+        let Some(model) = self.ivars().model.upgrade() else {
+            return;
+        };
+        let (image, frame) = match self.ivars().icon.get() {
+            Some(icon) => (
+                icon.image(),
+                icon.convertRect_toView(icon.bounds(), Some(self)),
+            ),
+            None => (None, self.bounds()),
+        };
+        let items: Vec<Retained<NSDraggingItem>> = model
+            .drag_items(self.ivars().entry_id)
+            .iter()
+            .filter_map(|item| pasteboard::writer(self.mtm(), item))
+            .enumerate()
+            .map(|(index, writer)| {
+                let item =
+                    NSDraggingItem::initWithPasteboardWriter(NSDraggingItem::alloc(), &writer);
+                let offset = index.min(4) as f64 * 4.0;
+                let frame = NSRect::new(
+                    NSPoint::new(frame.origin.x + offset, frame.origin.y - offset),
+                    frame.size,
+                );
+                let contents = image.as_deref().map(|image| image.as_ref());
+                // SAFETY: `contents` is an NSImage, as the API expects.
+                unsafe { item.setDraggingFrame_contents(frame, contents) };
+                item
+            })
+            .collect();
+        if !items.is_empty() {
+            self.beginDraggingSessionWithItems_event_source(
+                &NSArray::from_retained_slice(&items),
+                event,
+                ProtocolObject::from_ref(self),
+            );
+        }
     }
 
     fn with_model(&self, f: impl FnOnce(&ShelfModel, Uuid)) {

@@ -115,6 +115,17 @@ impl ShelfStore {
         entries
     }
 
+    /// Applies `f` to an entry and saves. Returns false if it does not exist.
+    pub fn update(&mut self, id: Uuid, f: impl FnOnce(&mut Entry)) -> bool {
+        let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) else {
+            return false;
+        };
+        f(entry);
+        entry.touch();
+        self.save();
+        true
+    }
+
     /// Splits a stack into one entry per item, in place. Returns false if the
     /// entry does not exist, is not a stack, or is still receiving files.
     pub fn unstack(&mut self, id: Uuid) -> bool {

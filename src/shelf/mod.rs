@@ -6,6 +6,8 @@ mod item;
 mod materialize;
 mod model;
 mod pasteboard;
+mod promise;
+mod recent;
 mod store;
 mod view;
 mod window;

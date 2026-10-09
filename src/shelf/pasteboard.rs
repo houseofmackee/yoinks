@@ -3,16 +3,21 @@
 use std::path::PathBuf;
 
 use objc2::rc::Retained;
-use objc2::runtime::AnyClass;
-use objc2::{ClassType, Message};
+use objc2::runtime::{AnyClass, AnyObject, ProtocolObject};
+use objc2::{AnyThread, ClassType, MainThreadMarker, Message};
 use objc2_app_kit::{
-    NSBitmapImageFileType, NSBitmapImageRep, NSFilePromiseReceiver, NSPasteboard, NSPasteboardItem,
-    NSPasteboardType, NSPasteboardTypeFileURL, NSPasteboardTypePNG, NSPasteboardTypeRTF,
-    NSPasteboardTypeString, NSPasteboardTypeTIFF, NSPasteboardTypeURL,
+    NSAttributedStringAppKitDocumentFormats, NSBitmapImageFileType, NSBitmapImageRep,
+    NSFilePromiseReceiver, NSPasteboard, NSPasteboardItem, NSPasteboardType,
+    NSPasteboardTypeFileURL, NSPasteboardTypePNG, NSPasteboardTypeRTF, NSPasteboardTypeString,
+    NSPasteboardTypeTIFF, NSPasteboardTypeURL, NSPasteboardWriting,
 };
-use objc2_foundation::{NSArray, NSDictionary, NSURL, ns_string};
+use objc2_foundation::{
+    NSArray, NSAttributedString, NSData, NSDictionary, NSString, NSURL, ns_string,
+};
 
+use super::item::{Item, ItemKind};
 use super::materialize::Content;
+use super::promise::ContentPromise;
 
 /// Everything usable from one drop.
 #[derive(Default)]
@@ -171,4 +176,95 @@ fn image(
             extension: "tiff",
         },
     })
+}
+
+/// What to put on the pasteboard when dragging `item` out of the shelf.
+///
+/// Files and images go out as the file itself, so Finder moves or copies them
+/// with its usual rules; images also carry their data. Text, rich text and
+/// links go out as their content plus a file promise (see `promise.rs`).
+pub fn writer(
+    mtm: MainThreadMarker,
+    item: &Item,
+) -> Option<Retained<ProtocolObject<dyn NSPasteboardWriting>>> {
+    // SAFETY: Reading immutable framework constants.
+    let (file_url_type, url_type, png, rtf, string) = unsafe {
+        (
+            NSPasteboardTypeFileURL,
+            NSPasteboardTypeURL,
+            NSPasteboardTypePNG,
+            NSPasteboardTypeRTF,
+            NSPasteboardTypeString,
+        )
+    };
+    let promise = |file_type: &str, extras: Vec<(&NSPasteboardType, Retained<AnyObject>)>| {
+        let extras = extras
+            .into_iter()
+            .map(|(t, value)| (t.retain(), value))
+            .collect();
+        Some(ContentPromise::writer(
+            mtm,
+            item.path.clone(),
+            file_type,
+            extras,
+        ))
+    };
+
+    match &item.kind {
+        ItemKind::Text => {
+            let text = std::fs::read_to_string(&item.path).ok()?;
+            promise(
+                "public.plain-text",
+                vec![(string, object(NSString::from_str(&text)))],
+            )
+        }
+        ItemKind::RichText => {
+            let data = NSData::from_vec(std::fs::read(&item.path).ok()?);
+            // SAFETY: Passing no document attributes out-parameter is allowed.
+            let plain = unsafe {
+                NSAttributedString::initWithRTF_documentAttributes(
+                    NSAttributedString::alloc(),
+                    &data,
+                    None,
+                )
+            };
+            let mut extras = vec![(rtf, object(data))];
+            if let Some(plain) = plain {
+                extras.push((string, object(plain.string())));
+            }
+            promise("public.rtf", extras)
+        }
+        ItemKind::Url { url } => {
+            let url = NSString::from_str(url);
+            promise(
+                "com.apple.web-internet-location",
+                vec![
+                    (url_type, object(url.clone())),
+                    (url_name_type(), object(NSString::from_str(&item.title))),
+                    (string, object(url)),
+                ],
+            )
+        }
+        ItemKind::File | ItemKind::Image => {
+            let file_url = NSURL::from_file_path(&item.path)?.absoluteString()?;
+            let writer = NSPasteboardItem::new();
+            writer.setString_forType(&file_url, file_url_type);
+            let image_type = match item.path.extension().and_then(|e| e.to_str()) {
+                _ if item.kind != ItemKind::Image => None,
+                Some("png") => Some(png),
+                Some("jpg") => Some(jpeg_type()),
+                _ => None,
+            };
+            if let (Some(image_type), Ok(bytes)) = (image_type, std::fs::read(&item.path)) {
+                writer.setData_forType(&NSData::from_vec(bytes), image_type);
+            }
+            Some(ProtocolObject::from_retained(writer))
+        }
+        ItemKind::Pending => None,
+    }
+}
+
+fn object<T: Message>(value: Retained<T>) -> Retained<AnyObject> {
+    // SAFETY: Every Objective-C object is an `AnyObject`.
+    unsafe { Retained::cast_unchecked(value) }
 }

@@ -1,6 +1,7 @@
 //! `ShelfModel` ties the store, the items folder and the view together.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::ptr::NonNull;
@@ -16,6 +17,7 @@ use super::bookmark;
 use super::item::{Entry, Item, ItemKind, file_name};
 use super::materialize::ItemsDir;
 use super::pasteboard::Dropped;
+use super::recent::Recent;
 use super::store::{JsonFile, ShelfStore};
 use super::view::ShelfContentView;
 
@@ -23,6 +25,10 @@ pub struct ShelfModel {
     store: RefCell<ShelfStore>,
     items_dir: ItemsDir,
     view: Retained<ShelfContentView>,
+    /// Entries dragged out of the shelf, most recent first, for recall.
+    recent: RefCell<Recent>,
+    /// Keep entries on the shelf after they are dragged out.
+    keep_after_drag_out: Cell<bool>,
 }
 
 impl ShelfModel {
@@ -34,8 +40,21 @@ impl ShelfModel {
             store: RefCell::new(store),
             items_dir,
             view: ShelfContentView::new(mtm, weak.clone()),
+            recent: RefCell::default(),
+            keep_after_drag_out: Cell::new(false),
         });
-        model.store.borrow_mut().retain_map(revalidate);
+        model
+            .store
+            .borrow_mut()
+            .retain_map(|item| model.locate(item));
+        let live: HashSet<Uuid> = model
+            .store
+            .borrow()
+            .entries()
+            .iter()
+            .flat_map(|entry| entry.items.iter().map(|item| item.id))
+            .collect();
+        model.items_dir.remove_orphans(&live);
         model.reload();
         model
     }
@@ -46,6 +65,86 @@ impl ShelfModel {
 
     pub fn is_empty(&self) -> bool {
         self.store.borrow().is_empty()
+    }
+
+    pub fn set_keep_after_drag_out(&self, keep: bool) {
+        self.keep_after_drag_out.set(keep);
+    }
+
+    /// The items to put on the pasteboard when entry `id` is dragged out, or
+    /// none while it is still receiving files. Every item gets a bookmark
+    /// first, so it can be found again after Finder moves it.
+    pub fn drag_items(&self, id: Uuid) -> Vec<Item> {
+        let mut store = self.store.borrow_mut();
+        let Some(entry) = store.entry(id) else {
+            return Vec::new();
+        };
+        if entry.has_pending() {
+            return Vec::new();
+        }
+        if entry.items.iter().any(|item| item.bookmark.is_none()) {
+            store.update(id, |entry| {
+                for item in &mut entry.items {
+                    if item.bookmark.is_none() {
+                        item.bookmark = bookmark::create(&item.path);
+                    }
+                }
+            });
+        }
+        store
+            .entry(id)
+            .map(|entry| entry.items.clone())
+            .unwrap_or_default()
+    }
+
+    /// Entry `id` was dropped somewhere that accepted it. It leaves the shelf
+    /// and can be recalled, unless the shelf keeps dragged-out items.
+    pub fn dragged_out(&self, id: Uuid) {
+        if self.keep_after_drag_out.get() {
+            // Finder may have moved the files; follow them so the tile keeps
+            // working.
+            let mut store = self.store.borrow_mut();
+            store.update(id, |entry| {
+                entry.items = std::mem::take(&mut entry.items)
+                    .into_iter()
+                    .filter_map(|item| self.locate(item))
+                    .collect();
+            });
+            if store.entry(id).is_some_and(|entry| entry.items.is_empty()) {
+                store.remove(id);
+            }
+        } else {
+            let removed = self.store.borrow_mut().remove(id);
+            let evicted = removed.and_then(|entry| self.recent.borrow_mut().push(entry));
+            if let Some(evicted) = evicted {
+                self.delete_files(&[evicted]);
+            }
+        }
+        self.reload();
+    }
+
+    pub fn can_recall(&self) -> bool {
+        !self.recent.borrow().is_empty()
+    }
+
+    /// Puts the most recently dragged-out entry back on the shelf, following
+    /// its files to wherever they were moved. Entries whose files are all
+    /// gone are skipped. Returns false if there was nothing to recall.
+    pub fn recall(&self) -> bool {
+        loop {
+            let Some(mut entry) = self.recent.borrow_mut().pop() else {
+                return false;
+            };
+            entry.items = std::mem::take(&mut entry.items)
+                .into_iter()
+                .filter_map(|item| self.locate(item))
+                .collect();
+            if !entry.items.is_empty() {
+                self.store.borrow_mut().insert(entry);
+                self.reload();
+                return true;
+            }
+        }
     }
 
     /// Adds a drop to the shelf as one entry (a stack if it holds several
@@ -199,6 +298,29 @@ impl ShelfModel {
         }
     }
 
+    /// Finds where an item's file is now, following its bookmark through
+    /// renames and moves. An owned file that has left the items folder (moved
+    /// out by a drag) now belongs to the user and will never be deleted.
+    /// Returns `None` if the file is gone.
+    fn locate(&self, mut item: Item) -> Option<Item> {
+        if item.kind == ItemKind::Pending {
+            return None;
+        }
+        if let Some(resolved) = item.bookmark.as_deref().and_then(bookmark::resolve) {
+            if resolved.path != item.path {
+                if item.kind == ItemKind::File {
+                    item.title = file_name(&resolved.path);
+                }
+                item.path = resolved.path;
+            }
+            if resolved.stale {
+                item.bookmark = bookmark::create(&item.path).or(item.bookmark);
+            }
+        }
+        item.owned = item.owned && self.items_dir.owns(&item.path);
+        item.path.exists().then_some(item)
+    }
+
     fn reload(&self) {
         let store = self.store.borrow();
         self.view.reload(store.entries());
@@ -216,24 +338,4 @@ fn load_store(path: &Path) -> ShelfStore {
             ShelfStore::empty(Box::new(JsonFile::new(path.to_path_buf())))
         }
     }
-}
-
-/// On launch: follow moved or renamed user files through their bookmarks and
-/// drop items whose files are gone.
-fn revalidate(mut item: Item) -> Option<Item> {
-    if item.kind == ItemKind::Pending {
-        return None;
-    }
-    if !item.owned
-        && let Some(resolved) = item.bookmark.as_deref().and_then(bookmark::resolve)
-    {
-        if resolved.path != item.path {
-            item.title = file_name(&resolved.path);
-            item.path = resolved.path;
-        }
-        if resolved.stale {
-            item.bookmark = bookmark::create(&item.path).or(item.bookmark);
-        }
-    }
-    item.path.exists().then_some(item)
 }

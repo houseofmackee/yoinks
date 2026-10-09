@@ -2,6 +2,7 @@
 //! the Yoinks items folder, so every shelf item can later be dragged out as a
 //! file. Also owns cleanup of those files.
 
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -39,7 +40,13 @@ pub struct ItemsDir {
 }
 
 impl ItemsDir {
+    /// The root is created and canonicalized, so paths that come back from
+    /// bookmarks (which resolve symlinks such as `/tmp` to `/private/tmp`)
+    /// still compare equal to it.
     pub fn new(root: PathBuf) -> Self {
+        let root = fs::create_dir_all(&root)
+            .and_then(|()| fs::canonicalize(&root))
+            .unwrap_or(root);
         Self { root }
     }
 
@@ -113,17 +120,52 @@ impl ItemsDir {
         })
     }
 
+    /// True if `path` sits directly inside an item folder
+    /// (`<root>/<item-id>/<file>`), i.e. Yoinks created it and it has not been
+    /// moved out.
+    pub fn owns(&self, path: &Path) -> bool {
+        let Some(dir) = path.parent() else {
+            return false;
+        };
+        let Some(parent) = dir.parent() else {
+            return false;
+        };
+        let in_root =
+            parent == self.root || fs::canonicalize(parent).is_ok_and(|parent| parent == self.root);
+        in_root
+            && dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| Uuid::parse_str(name).is_ok())
+    }
+
     /// Deletes the folder of an owned item. User files are never touched, and
     /// nothing outside the items folder is ever deleted.
     pub fn delete(&self, item: &Item) -> io::Result<()> {
-        if !item.owned {
+        if !item.owned || !self.owns(&item.path) {
             return Ok(());
         }
-        match item.path.parent() {
-            Some(dir) if dir.parent() == Some(self.root.as_path()) && dir != self.root => {
-                fs::remove_dir_all(dir)
+        let dir = item.path.parent().expect("owned paths have a parent");
+        match fs::remove_dir_all(dir) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            result => result,
+        }
+    }
+
+    /// Deletes item folders not referenced by `live` item ids: leftovers from
+    /// dragged-out items still recallable when the app quit, or from a crash.
+    pub fn remove_orphans(&self, live: &HashSet<Uuid>) {
+        let Ok(dirs) = fs::read_dir(&self.root) else {
+            return;
+        };
+        for dir in dirs.flatten() {
+            let name = dir.file_name();
+            let Some(id) = name.to_str().and_then(|name| Uuid::parse_str(name).ok()) else {
+                continue;
+            };
+            if !live.contains(&id) && dir.path().is_dir() {
+                let _ = fs::remove_dir_all(dir.path());
             }
-            _ => Ok(()),
         }
     }
 
@@ -284,7 +326,9 @@ mod tests {
         // Every item lives in its own folder named after its id.
         assert_eq!(
             text.path.parent().unwrap(),
-            tmp.path().join(text.id.to_string())
+            fs::canonicalize(tmp.path())
+                .unwrap()
+                .join(text.id.to_string())
         );
     }
 
@@ -328,5 +372,51 @@ mod tests {
         stray.path = user_path.clone();
         items.delete(&stray).unwrap();
         assert!(user_path.exists());
+    }
+
+    #[test]
+    fn owns_only_direct_item_folders() {
+        let root = PathBuf::from("/data/Items");
+        let items = ItemsDir::new(root.clone());
+        let id = Uuid::new_v4().to_string();
+        assert!(items.owns(&root.join(&id).join("a.txt")));
+        assert!(!items.owns(&root.join("a.txt")));
+        assert!(!items.owns(&root.join(INCOMING).join("a.txt")));
+        assert!(!items.owns(&root.join(&id).join("sub/a.txt")));
+        assert!(!items.owns(Path::new("/Users/me/Desktop/a.txt")));
+    }
+
+    #[test]
+    fn remove_orphans_keeps_live_items_and_other_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let items = ItemsDir::new(tmp.path().to_path_buf());
+        let live = items.materialize(Content::Text("live".into())).unwrap();
+        let orphan = items.materialize(Content::Text("orphan".into())).unwrap();
+        fs::create_dir_all(tmp.path().join("Not An Item")).unwrap();
+
+        items.remove_orphans(&HashSet::from([live.id]));
+        assert!(live.path.exists());
+        assert!(!orphan.path.parent().unwrap().exists());
+        assert!(tmp.path().join("Not An Item").exists());
+    }
+
+    #[test]
+    fn owns_matches_through_symlinked_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real");
+        fs::create_dir_all(&real).unwrap();
+        let link = tmp.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        // Created through the symlink, checked with the resolved path (as a
+        // bookmark would return it), and the other way around.
+        let via_link = ItemsDir::new(link.clone());
+        let item = via_link.materialize(Content::Text("x".into())).unwrap();
+        let resolved = fs::canonicalize(&item.path).unwrap();
+        assert!(via_link.owns(&resolved));
+        let unresolved = link
+            .join(item.id.to_string())
+            .join(item.path.file_name().unwrap());
+        assert!(via_link.owns(&unresolved));
     }
 }

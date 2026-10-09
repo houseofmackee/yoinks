@@ -50,6 +50,8 @@ src/
     materialize.rs   writes dropped content into owned files
     pasteboard.rs    reads drag pasteboards
     bookmark.rs      file bookmarks
+    promise.rs       file promise + content writer for dragging content out
+    recent.rs        recall buffer of dragged-out entries
   drag/
     monitor.rs       global drag detection (NSEvent global monitor + drag pasteboard polling)
     session.rs       outgoing drag sessions, move/copy/link semantics
@@ -117,14 +119,30 @@ Key design points:
 - `YOINKS_DATA_DIR` overrides the data folder (used for testing).
 - Deferred: dropping colors (low value; revisit with Phase 6 previews).
 
-### Phase 3: Drag out (Finder semantics)
-- Shelf tiles act as `NSDraggingSource`; write file URLs and native types to
-  the pasteboard.
-- Default move/copy behavior mirrors Finder: same volume moves, different
-  volume copies. Option (⌥) forces copy, Command (⌘) forces move.
-- After a successful drag out, remove the item (configurable: "keep items
-  after dragging out").
-- Remember recently removed items for **recall** (see hotkey long press).
+### Phase 3: Drag out (Finder semantics) (done)
+- [x] Tiles are `NSDraggingSource`s; a stack drags all its items.
+- [x] Files and images go out as file URLs (images also carry their data).
+  The source offers Copy, Move, Link and Generic and Finder applies its own
+  rules: same volume moves, other volume copies, Option (⌥) copies, Command
+  (⌘) moves, Option-Command makes an alias.
+- [x] Text, rich text and links go out as a file promise plus their content:
+  Finder writes a file, while text editors, text fields and browsers get the
+  text or link (a file URL makes TextEdit insert an attachment instead).
+- [x] After a successful drag out the entry leaves the shelf. "Keep items
+  after dragging out" exists in the model (`YOINKS_KEEP_AFTER_DRAG_OUT=1`
+  until Preferences in Phase 8); kept items follow their files if Finder
+  moved them.
+- [x] The last 10 dragged-out entries can be recalled (menu bar: Recall
+  Last Dragged Item; hotkey long press in Phase 5). Recall follows moved
+  files via bookmarks. A file Yoinks created that was moved out becomes the
+  user's and is never deleted.
+- [x] Dropping a tile back onto the shelf is refused.
+- [x] Owned files no longer referenced (recall buffer at quit, crashes) are
+  removed on launch.
+- Not offered: dragging to the Trash (Delete operation), to avoid trashing
+  original files by accident. Remove from the context menu instead.
+- Known limit: recall cannot follow a file that Finder moved to another
+  volume (that is a copy plus delete, so the bookmark points at nothing).
 
 ### Phase 4: Automatic appearance
 - Detect a drag anywhere on the system: global `NSEvent` monitor for

@@ -47,6 +47,13 @@ pub fn build(mtm: MainThreadMarker, target: &AnyObject) -> Retained<NSStatusItem
         "",
         Some(target),
     ));
+    menu.addItem(&menu_item(
+        mtm,
+        "Recall Last Dragged Item",
+        sel!(recallItems:),
+        "",
+        Some(target),
+    ));
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     menu.addItem(&menu_item(
         mtm,
