@@ -105,6 +105,12 @@ define_class!(
             }
         }
 
+        #[unsafe(method(menuBarIconChanged:))]
+        fn menu_bar_icon_changed(&self, sender: &NSButton) {
+            let show = sender.state() == NSControlStateValueOn;
+            self.update(|s| s.show_menu_bar_icon = show);
+        }
+
         #[unsafe(method(keepChanged:))]
         fn keep_changed(&self, sender: &NSButton) {
             let keep = sender.state() == NSControlStateValueOn;
@@ -386,6 +392,24 @@ impl PreferencesWindow {
                 .position(|(m, _)| *m == settings.appear_on_drag)
                 .unwrap_or(0) as isize,
         );
+        let icon = form::checkbox(
+            mtm,
+            "Show Yoinks in the menu bar",
+            target,
+            sel!(menuBarIconChanged:),
+        );
+        icon.setState(if settings.show_menu_bar_icon {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
+        let icon_note = note(
+            mtm,
+            "When hidden, open the shelf with the keyboard shortcut or by opening Yoinks \
+             again, and use the gear button at the bottom of the shelf for this window \
+             and the other menu commands.",
+            NOTE_WIDTH,
+        );
         let keep = form::checkbox(
             mtm,
             "Keep items after dragging them out",
@@ -409,6 +433,8 @@ impl PreferencesWindow {
         let rows: Vec<Retained<NSView>> = vec![
             up(&*row(mtm, "Startup:", &login)),
             up(&*indented(mtm, &login_note)),
+            up(&*row(mtm, "Menu bar:", &icon)),
+            up(&*indented(mtm, &icon_note)),
             up(&*row(mtm, "Shelf edge:", &edge)),
             up(&*row(mtm, "Show the shelf during drags:", &appear)),
             up(&*row(mtm, "After dragging out:", &keep)),

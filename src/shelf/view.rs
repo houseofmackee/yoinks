@@ -25,6 +25,7 @@ use objc2_quick_look_ui::{
 use uuid::Uuid;
 
 use super::item::Entry;
+use super::menu_button::MenuButton;
 use super::model::ShelfModel;
 use super::pasteboard;
 use super::tile::TileView;
@@ -53,6 +54,7 @@ pub struct ContentIvars {
     selected: Cell<Option<Uuid>>,
     /// True while this view controls the Quick Look panel.
     quick_look: Cell<bool>,
+    menu_button: Retained<MenuButton>,
 }
 
 define_class!(
@@ -306,6 +308,7 @@ impl ShelfContentView {
             order: RefCell::default(),
             selected: Cell::new(None),
             quick_look: Cell::new(false),
+            menu_button: MenuButton::new(mtm),
         });
         // SAFETY: `initWithFrame:` is NSView's designated initializer.
         let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: rect] };
@@ -337,9 +340,16 @@ impl ShelfContentView {
         scroll.setDocumentView(Some(&document));
         self.addSubview(&scroll);
         self.addSubview(&ivars.placeholder);
+        self.addSubview(&ivars.menu_button);
 
         let clip = scroll.contentView();
-        let views: [&NSView; 4] = [&scroll, &document, &ivars.list, &ivars.placeholder];
+        let views: [&NSView; 5] = [
+            &scroll,
+            &document,
+            &ivars.list,
+            &ivars.placeholder,
+            &ivars.menu_button,
+        ];
         for view in views {
             view.setTranslatesAutoresizingMaskIntoConstraints(false);
         }
@@ -349,7 +359,15 @@ impl ShelfContentView {
                 .constraintEqualToAnchor(&self.topAnchor()),
             scroll
                 .bottomAnchor()
-                .constraintEqualToAnchor(&self.bottomAnchor()),
+                .constraintEqualToAnchor_constant(&ivars.menu_button.topAnchor(), -2.0),
+            ivars
+                .menu_button
+                .bottomAnchor()
+                .constraintEqualToAnchor_constant(&self.bottomAnchor(), -6.0),
+            ivars
+                .menu_button
+                .centerXAnchor()
+                .constraintEqualToAnchor(&self.centerXAnchor()),
             scroll
                 .leadingAnchor()
                 .constraintEqualToAnchor(&self.leadingAnchor()),
@@ -450,6 +468,16 @@ impl ShelfContentView {
         import.setIdentifier(Some(unsafe { NSMenuItemImportFromDeviceIdentifier }));
         menu.addItem(&import);
         menu
+    }
+
+    /// The gear button at the bottom; `make` builds the menu it opens.
+    pub fn set_menu(&self, make: impl Fn() -> Retained<NSMenu> + 'static) {
+        self.ivars().menu_button.set_menu(make);
+    }
+
+    /// The gear button, e.g. to place windows next to it.
+    pub fn menu_button(&self) -> &NSView {
+        &self.ivars().menu_button
     }
 
     /// Selects an entry (or nothing), focuses the shelf for keyboard use and

@@ -10,7 +10,7 @@ use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSApplication, NSApplicationDelegate, NSBeep, NSControlStateValueOff, NSControlStateValueOn,
-    NSMenuItem, NSMenuItemValidation, NSPasteboard, NSStatusItem,
+    NSMenu, NSMenuItem, NSMenuItemValidation, NSPasteboard, NSStatusItem,
 };
 use objc2_foundation::{MainThreadMarker, NSArray, NSNotification, NSString, NSURL, ns_string};
 
@@ -98,10 +98,19 @@ define_class!(
             if let Err(error) = self.register_hotkey() {
                 eprintln!("yoinks: {error}");
             }
-            let shortcut = ivars.settings.borrow().shortcut();
+            let (shortcut, show_icon) = {
+                let settings = ivars.settings.borrow();
+                (settings.shortcut(), settings.show_menu_bar_icon)
+            };
             let _ = ivars
                 .status_item
-                .set(status_item::build(mtm, self, shortcut.as_ref()));
+                .set(status_item::build(mtm, self, shortcut.as_ref(), show_icon));
+            // The same menu from the gear button at the bottom of the shelf.
+            let weak = objc2::rc::Weak::new(self);
+            self.shelf().set_menu(move || match weak.load() {
+                Some(delegate) => delegate.app_menu(),
+                None => NSMenu::new(mtm),
+            });
         }
 
         // Files opened with Yoinks go on the shelf (one stack); `yoinks://`
@@ -195,9 +204,20 @@ define_class!(
         fn show_clipboard_history(&self, _sender: Option<&AnyObject>) {
             let mtm = self.mtm();
             let ivars = self.ivars();
-            let button = ivars.status_item.get().and_then(|item| item.button(mtm));
-            if let (Some(list), Some(button)) = (ivars.history_list.get(), button) {
-                list.toggle(&button);
+            let Some(list) = ivars.history_list.get() else { return };
+            // Under the menu bar icon, or next to the shelf when the icon is
+            // hidden (the command then comes from the shelf's gear menu).
+            let status_button = ivars
+                .status_item
+                .get()
+                .filter(|item| item.isVisible())
+                .and_then(|item| item.button(mtm));
+            match status_button {
+                Some(button) => list.toggle(&button),
+                None => {
+                    self.shelf().show();
+                    list.toggle(self.shelf().menu_button());
+                }
             }
         }
 
@@ -252,6 +272,12 @@ impl AppDelegate {
         }
     }
 
+    /// The app menu with the current shortcut, for the shelf's gear button.
+    fn app_menu(&self) -> Retained<NSMenu> {
+        let shortcut = self.ivars().settings.borrow().shortcut();
+        status_item::menu(self.mtm(), self, shortcut.as_ref())
+    }
+
     fn shelf(&self) -> &Rc<Shelf> {
         self.ivars()
             .shelf
@@ -291,6 +317,9 @@ impl AppDelegate {
             .set_keep_after_drag_out(settings.keep_after_drag_out);
         if let Some(monitor) = ivars.drag_monitor.get() {
             monitor.update(&settings);
+        }
+        if let Some(item) = ivars.status_item.get() {
+            item.setVisible(settings.show_menu_bar_icon);
         }
         if let Some(clipboard) = ivars.clipboard.get() {
             clipboard.apply(&settings);

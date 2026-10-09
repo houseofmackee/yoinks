@@ -29,7 +29,7 @@ Spaces and full-screen apps.
 | Persistence | `serde` + `serde_json` (or `rusqlite` if history grows) | Stored under `~/Library/Application Support/Yoinks` |
 | Global hotkeys | Carbon `RegisterEventHotKey` via FFI, or `global-hotkey` crate | No Accessibility permission needed for Carbon hotkeys |
 | Logging | `tracing` + `tracing-oslog` | Shows up in Console.app |
-| Bundling | `cargo-bundle` (metadata already in `Cargo.toml`), later a custom `xtask` | Produces `Yoinks.app`, then codesign + notarize |
+| Bundling | `scripts/bundle.sh` + `macos/Info.plist`, `scripts/make-dmg.sh` | Produces `Yoinks.app` and a `.dmg`; Developer ID signing and notarization still to do |
 | Minimum OS | macOS 13 Ventura | Unlocks modern APIs (SMAppService, App Intents) |
 
 ## 3. Architecture
@@ -301,16 +301,36 @@ Key design points:
   available; without one, only the Share extension and Shortcuts actions
   could be tried, ad hoc and on one Mac.
 
-### Phase 10: Packaging and distribution
-- `Info.plist` with `LSUIElement = true`, URL scheme, services, usage strings.
-- App icon (`.icns`) and template menu bar icon.
-- Hardened runtime, Developer ID signing, notarization via `notarytool`.
-- Direct download only: a signed, notarized `.dmg` hosted on GitHub Releases.
-- Auto-updates with Sparkle (via a small framework embed).
-- Build step that compiles the Swift add-ons and embeds them in
-  `Yoinks.app/Contents/PlugIns`.
-- GitHub Actions: `cargo fmt --check`, `cargo clippy -D warnings`,
-  `cargo test`, universal binary (`aarch64` + `x86_64` with `lipo`).
+### Phase 10: Packaging and distribution (done except signing)
+- [x] Apple Silicon only (decision 2026-10-10): no universal binary.
+  `LSArchitecturePriority` is arm64.
+- [x] App icon drawn by `scripts/make-icon.swift` into `macos/AppIcon.icns`
+  (tray-and-arrow on a blue gradient, macOS icon grid); template SF Symbol
+  in the menu bar.
+- [x] Release profile: thin LTO, one codegen unit, stripped (about 1.2 MB).
+- [x] `scripts/make-dmg.sh`: release bundle plus Applications shortcut in a
+  compressed APFS disk image, `target/release/Yoinks-<version>.dmg`.
+- [x] GitHub Actions (`.github/workflows/ci.yml`, Apple Silicon runner):
+  `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, disk image
+  uploaded as an artifact. Not run yet: the repository has no remote.
+- [x] README with install, usage, command line, settings and build steps.
+- To do, needs a Developer ID: hardened runtime, Developer ID signing,
+  notarization with `notarytool` and stapling, then signing in CI with
+  secrets.
+- To do after signing: automatic updates with Sparkle (EdDSA-signed
+  appcast, hosted on GitHub Releases), and a release workflow on tags.
+- Swift add-ons (Phase 9b) would be built and embedded here once signing
+  exists.
+
+### Additions requested after Phase 10 (done)
+- [x] Hide the menu bar icon: `show_menu_bar_icon` setting and a
+  "Show Yoinks in the menu bar" checkbox in Preferences > General, applied
+  live. With the icon hidden, the shelf is reached with the shortcut,
+  automatic appearance, or by opening Yoinks again.
+- [x] Settings from the shelf: a gear button at the bottom of the shelf
+  opens the full app menu (Preferences…, Clipboard History…, Quit, ...)
+  upwards, with nothing pre-selected. Clipboard History opened from there
+  appears beside the shelf.
 
 ## 5. Improvements over Yoink
 
@@ -348,7 +368,7 @@ Key design points:
 | M2: Yoink parity core | 4, 5, 6 | Auto-appearing shelf, hotkey gestures, previews |
 | M3: Clipboard + settings | 7, 8 | Clipboard history and a full preferences window |
 | M4: Integrations | 9 | CLI, URL scheme, Services, Continuity Camera |
-| M5: Ship | 10 | Signed, notarized `Yoinks.app` with CI |
+| M5: Ship | 10 | `Yoinks.app` and `.dmg` with CI; signing and notarization pending |
 | M6: Beyond Yoink | Section 5 | Selected improvements, prioritized after M5 |
 
 ## 8. Decisions and future options

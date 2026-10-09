@@ -22,6 +22,7 @@ pub fn build(
     mtm: MainThreadMarker,
     target: &AnyObject,
     shortcut: Option<&Shortcut>,
+    visible: bool,
 ) -> Retained<NSStatusItem> {
     let status_item =
         NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
@@ -41,6 +42,7 @@ pub fn build(
     }
 
     status_item.setMenu(Some(&menu(mtm, target, shortcut)));
+    status_item.setVisible(visible);
     status_item
 }
 
@@ -54,7 +56,9 @@ pub fn rebuild_menu(
     status_item.setMenu(Some(&menu(mtm, target, shortcut)));
 }
 
-fn menu(
+/// The app menu, shown from the menu bar icon and from the shelf's gear
+/// button.
+pub fn menu(
     mtm: MainThreadMarker,
     target: &AnyObject,
     shortcut: Option<&Shortcut>,

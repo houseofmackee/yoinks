@@ -128,6 +128,16 @@ impl Shelf {
         &self.model
     }
 
+    /// Sets how the shelf's gear button builds its menu.
+    pub fn set_menu(&self, make: impl Fn() -> Retained<objc2_app_kit::NSMenu> + 'static) {
+        self.model.view().set_menu(make);
+    }
+
+    /// The shelf's gear button.
+    pub fn menu_button(&self) -> &objc2_app_kit::NSView {
+        self.model.view().menu_button()
+    }
+
     pub fn edge(&self) -> ShelfEdge {
         self.edge.get()
     }

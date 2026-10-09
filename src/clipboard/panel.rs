@@ -540,17 +540,34 @@ fn panel_background(mtm: MainThreadMarker) -> Retained<NSVisualEffectView> {
     view
 }
 
-/// Where the panel goes: centered under `anchor`, kept on its screen.
+/// Where the panel goes: centered under `anchor` when it is the menu bar
+/// icon; beside the anchor's window (the shelf) otherwise. Always kept on the
+/// anchor's screen.
 fn panel_origin(anchor: &NSView) -> Option<NSPoint> {
     let window = anchor.window()?;
     let button = window.convertRectToScreen(anchor.convertRect_toView(anchor.bounds(), None));
     let visible = window.screen()?.visibleFrame();
     let min_x = visible.origin.x + 8.0;
-    let max_x = visible.origin.x + visible.size.width - WIDTH - 8.0;
-    let x =
-        (button.origin.x + button.size.width / 2.0 - WIDTH / 2.0).clamp(min_x, max_x.max(min_x));
-    let y = button.origin.y - HEIGHT - 6.0;
-    Some(NSPoint::new(x, y))
+    let max_x = (visible.origin.x + visible.size.width - WIDTH - 8.0).max(min_x);
+    let min_y = visible.origin.y + 8.0;
+    let max_y = (visible.origin.y + visible.size.height - HEIGHT - 8.0).max(min_y);
+    let in_menu_bar = window.level() >= NSStatusWindowLevel;
+    let (x, y) = if in_menu_bar {
+        (
+            button.origin.x + button.size.width / 2.0 - WIDTH / 2.0,
+            button.origin.y - HEIGHT - 6.0,
+        )
+    } else {
+        let frame = window.frame();
+        let left = frame.origin.x - WIDTH - 8.0;
+        let x = if left >= min_x {
+            left
+        } else {
+            frame.origin.x + frame.size.width + 8.0
+        };
+        (x, button.origin.y)
+    };
+    Some(NSPoint::new(x.clamp(min_x, max_x), y.clamp(min_y, max_y)))
 }
 
 /// One clip: icon, one-line title, and "source · age" below.

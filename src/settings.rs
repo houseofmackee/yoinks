@@ -31,6 +31,9 @@ pub enum AppearMode {
 pub struct Settings {
     pub shelf_edge: ShelfEdge,
     pub appear_on_drag: AppearMode,
+    /// Show the tray icon in the menu bar. When hidden, the same menu is
+    /// available from the gear button at the bottom of the shelf.
+    pub show_menu_bar_icon: bool,
     /// Keep entries on the shelf after dragging them out.
     pub keep_after_drag_out: bool,
     /// Bundle identifiers of apps whose drags never bring up the shelf.
@@ -53,6 +56,7 @@ impl Default for Settings {
         Self {
             shelf_edge: ShelfEdge::default(),
             appear_on_drag: AppearMode::default(),
+            show_menu_bar_icon: true,
             keep_after_drag_out: false,
             ignored_apps: Vec::new(),
             hotkey: Some(DEFAULT_HOTKEY.to_owned()),
@@ -122,6 +126,7 @@ mod tests {
         assert!(written.contains("\"appear_on_drag\": \"at_edge\""));
         assert!(written.contains("\"shelf_edge\": \"right\""));
         assert!(written.contains("\"hotkey\": \"control+option+Y\""));
+        assert!(written.contains("\"show_menu_bar_icon\": true"));
     }
 
     #[test]

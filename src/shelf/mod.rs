@@ -5,6 +5,7 @@ mod describe;
 pub mod geometry;
 mod item;
 mod materialize;
+mod menu_button;
 mod model;
 mod pasteboard;
 mod promise;
