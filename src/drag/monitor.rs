@@ -36,7 +36,8 @@ struct Session {
 
 pub struct DragMonitor {
     shelf: Rc<Shelf>,
-    settings: Settings,
+    /// Live settings; updated from Preferences.
+    settings: RefCell<Settings>,
     drag_pasteboard: Retained<NSPasteboard>,
     tracker: RefCell<DragTracker>,
     session: Cell<Option<Session>>,
@@ -46,16 +47,14 @@ pub struct DragMonitor {
 }
 
 impl DragMonitor {
-    /// Starts watching. Returns `None` when auto-show is turned off.
-    pub fn start(shelf: Rc<Shelf>, settings: &Settings) -> Option<Rc<Self>> {
-        if settings.appear_on_drag == AppearMode::Off {
-            return None;
-        }
+    /// Starts watching. With `appear_on_drag: off` the monitor stays
+    /// installed but does nothing, so the setting can change at runtime.
+    pub fn start(shelf: Rc<Shelf>, settings: &Settings) -> Rc<Self> {
         // SAFETY: Reading an immutable framework constant.
         let drag_pasteboard = NSPasteboard::pasteboardWithName(unsafe { NSPasteboardNameDrag });
         let monitor = Rc::new(Self {
             shelf,
-            settings: settings.clone(),
+            settings: RefCell::new(settings.clone()),
             drag_pasteboard,
             tracker: RefCell::default(),
             session: Cell::new(None),
@@ -86,7 +85,12 @@ impl DragMonitor {
             Some(token) => monitor._monitors.borrow_mut().push(token),
             None => eprintln!("yoinks: could not install the drag monitor"),
         }
-        Some(monitor)
+        monitor
+    }
+
+    /// Applies changed settings.
+    pub fn update(&self, settings: &Settings) {
+        *self.settings.borrow_mut() = settings.clone();
     }
 
     fn mouse_down(&self) {
@@ -111,7 +115,7 @@ impl DragMonitor {
         let source_ignored = NSWorkspace::sharedWorkspace()
             .frontmostApplication()
             .and_then(|app| app.bundleIdentifier())
-            .is_some_and(|id| self.settings.ignores_app(&id.to_string()));
+            .is_some_and(|id| self.settings.borrow().ignores_app(&id.to_string()));
         self.session.set(Some(Session {
             passive: source_ignored || self.shelf.is_visible(),
             shown: false,
@@ -128,7 +132,8 @@ impl DragMonitor {
         if session.passive || session.shown {
             return;
         }
-        match self.settings.appear_on_drag {
+        let mode = self.settings.borrow().appear_on_drag;
+        match mode {
             AppearMode::Off => return,
             AppearMode::AtEdge => self.shelf.appear_at_edge(),
             AppearMode::AtCursor => self.shelf.appear_at_cursor(),

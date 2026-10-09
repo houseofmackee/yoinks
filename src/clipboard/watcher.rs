@@ -33,7 +33,9 @@ pub struct ClipboardHistory {
     history: RefCell<History>,
     /// Payload files (`<clip-id>.png`, `.rtf`).
     clips_dir: PathBuf,
-    ignored_apps: Vec<String>,
+    ignored_apps: RefCell<Vec<String>>,
+    /// The `clipboard_history` setting; when off nothing is recorded.
+    enabled: Cell<bool>,
     paused: Cell<bool>,
     /// The general pasteboard's change count last seen (or set by us).
     last_change: Cell<isize>,
@@ -42,12 +44,10 @@ pub struct ClipboardHistory {
 }
 
 impl ClipboardHistory {
-    /// Starts watching, unless clipboard history is turned off. Whatever is
-    /// on the clipboard at launch is not recorded.
-    pub fn start(data_dir: &Path, settings: &Settings) -> Option<Rc<Self>> {
-        if !settings.clipboard_history {
-            return None;
-        }
+    /// Starts watching. Whatever is on the clipboard at launch is not
+    /// recorded. With `clipboard_history: false` nothing is recorded until
+    /// the setting is turned back on.
+    pub fn start(data_dir: &Path, settings: &Settings) -> Rc<Self> {
         let clips_dir = data_dir.join("Clips");
         let _ = fs::create_dir_all(&clips_dir);
         let history = History::load(
@@ -59,7 +59,8 @@ impl ClipboardHistory {
         let this = Rc::new(Self {
             history: RefCell::new(history),
             clips_dir,
-            ignored_apps: settings.clipboard_ignored_apps.clone(),
+            ignored_apps: RefCell::new(settings.clipboard_ignored_apps.clone()),
+            enabled: Cell::new(settings.clipboard_history),
             paused: Cell::new(false),
             last_change: Cell::new(NSPasteboard::generalPasteboard().changeCount()),
             on_change: RefCell::new(None),
@@ -77,12 +78,33 @@ impl ClipboardHistory {
             NSTimer::scheduledTimerWithTimeInterval_repeats_block(POLL_INTERVAL, true, &block)
         };
         *this._timer.borrow_mut() = Some(timer);
-        Some(this)
+        this
     }
 
     /// Called whenever the history changes (for the history window).
     pub fn set_on_change(&self, f: impl Fn() + 'static) {
         *self.on_change.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// Applies changed settings. Turning recording back on skips whatever
+    /// was copied while it was off.
+    pub fn apply(&self, settings: &Settings) {
+        if settings.clipboard_history && !self.enabled.get() {
+            self.last_change
+                .set(NSPasteboard::generalPasteboard().changeCount());
+        }
+        self.enabled.set(settings.clipboard_history);
+        *self.ignored_apps.borrow_mut() = settings.clipboard_ignored_apps.clone();
+        let removed = self
+            .history
+            .borrow_mut()
+            .set_limit(settings.clipboard_history_size);
+        self.delete_payloads(&removed);
+        self.changed();
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
     }
 
     pub fn is_paused(&self) -> bool {
@@ -172,7 +194,7 @@ impl ClipboardHistory {
     fn poll(&self) {
         let pasteboard = NSPasteboard::generalPasteboard();
         let count = pasteboard.changeCount();
-        if count == self.last_change.replace(count) || self.paused.get() {
+        if count == self.last_change.replace(count) || self.paused.get() || !self.enabled.get() {
             return;
         }
         self.record(&pasteboard);
@@ -190,7 +212,7 @@ impl ClipboardHistory {
                 name: app.localizedName().map(|name| name.to_string()),
             });
         let source_id = source.as_ref().and_then(|s| s.bundle_id.as_deref());
-        if !filters::should_record(&types, source_id, &self.ignored_apps) {
+        if !filters::should_record(&types, source_id, &self.ignored_apps.borrow()) {
             return;
         }
         let id = Uuid::new_v4();

@@ -3,7 +3,7 @@
 //! macOS does not report clashes with other apps' shortcuts: if another app
 //! registers the same one, both receive it.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::ptr::{self, NonNull};
 use std::rc::{Rc, Weak};
@@ -61,6 +61,7 @@ unsafe extern "C" {
         options: u32,
         out_ref: *mut EventHotKeyRef,
     ) -> OSStatus;
+    fn UnregisterEventHotKey(hotkey: EventHotKeyRef) -> OSStatus;
     fn GetEventKind(event: EventRef) -> u32;
 }
 
@@ -74,64 +75,46 @@ pub struct HotKey {
     tracker: RefCell<GestureTracker>,
     timer: RefCell<Option<Retained<NSTimer>>>,
     on_gesture: Box<dyn Fn(Gesture)>,
+    /// Carbon's handle; unregistered on drop.
+    hotkey_ref: EventHotKeyRef,
 }
 
 impl HotKey {
-    /// Registers `shortcut` system-wide. Only one shortcut is supported.
+    /// Registers `shortcut` system-wide, replacing any previous registration
+    /// (only one shortcut is active at a time). Dropping the returned value
+    /// unregisters it.
     pub fn register(
         shortcut: &Shortcut,
         on_gesture: impl Fn(Gesture) + 'static,
     ) -> Result<Rc<Self>, String> {
+        install_handler()?;
+        let mut hotkey_ref = ptr::null_mut();
+        let id = EventHotKeyID {
+            signature: SIGNATURE,
+            id: 1,
+        };
+        // SAFETY: Plain Carbon call with a valid out pointer.
+        let status = unsafe {
+            RegisterEventHotKey(
+                shortcut.key_code,
+                shortcut.modifiers.carbon_mask(),
+                id,
+                GetApplicationEventTarget(),
+                0,
+                &mut hotkey_ref,
+            )
+        };
+        if status != NO_ERR {
+            return Err(format!(
+                "could not register the shortcut {shortcut} ({status})"
+            ));
+        }
         let hotkey = Rc::new(Self {
             tracker: RefCell::default(),
             timer: RefCell::new(None),
             on_gesture: Box::new(on_gesture),
+            hotkey_ref,
         });
-        let types = [
-            EventTypeSpec {
-                event_class: EVENT_CLASS_KEYBOARD,
-                event_kind: EVENT_HOT_KEY_PRESSED,
-            },
-            EventTypeSpec {
-                event_class: EVENT_CLASS_KEYBOARD,
-                event_kind: EVENT_HOT_KEY_RELEASED,
-            },
-        ];
-        let mut handler_ref = ptr::null_mut();
-        let mut hotkey_ref = ptr::null_mut();
-        // SAFETY: Plain Carbon calls with valid pointers; the handler is a
-        // `'static` function and the type list outlives the call.
-        unsafe {
-            let target = GetApplicationEventTarget();
-            let status = InstallEventHandler(
-                target,
-                handle_event,
-                types.len(),
-                types.as_ptr(),
-                ptr::null_mut(),
-                &mut handler_ref,
-            );
-            if status != NO_ERR {
-                return Err(format!("InstallEventHandler failed ({status})"));
-            }
-            let id = EventHotKeyID {
-                signature: SIGNATURE,
-                id: 1,
-            };
-            let status = RegisterEventHotKey(
-                shortcut.key_code,
-                shortcut.modifiers.carbon_mask(),
-                id,
-                target,
-                0,
-                &mut hotkey_ref,
-            );
-            if status != NO_ERR {
-                return Err(format!(
-                    "could not register the shortcut {shortcut} ({status})"
-                ));
-            }
-        }
         ACTIVE.with(|active| *active.borrow_mut() = Rc::downgrade(&hotkey));
         Ok(hotkey)
     }
@@ -178,6 +161,55 @@ impl HotKey {
             unsafe { NSTimer::scheduledTimerWithTimeInterval_repeats_block(delay, false, &block) };
         *self.timer.borrow_mut() = Some(timer);
     }
+}
+
+impl Drop for HotKey {
+    fn drop(&mut self) {
+        if let Some(timer) = self.timer.take() {
+            timer.invalidate();
+        }
+        // SAFETY: `hotkey_ref` came from a successful registration and is
+        // unregistered exactly once.
+        unsafe { UnregisterEventHotKey(self.hotkey_ref) };
+    }
+}
+
+/// Installs the Carbon event handler once per process.
+fn install_handler() -> Result<(), String> {
+    thread_local! {
+        static INSTALLED: Cell<bool> = const { Cell::new(false) };
+    }
+    if INSTALLED.with(Cell::get) {
+        return Ok(());
+    }
+    let types = [
+        EventTypeSpec {
+            event_class: EVENT_CLASS_KEYBOARD,
+            event_kind: EVENT_HOT_KEY_PRESSED,
+        },
+        EventTypeSpec {
+            event_class: EVENT_CLASS_KEYBOARD,
+            event_kind: EVENT_HOT_KEY_RELEASED,
+        },
+    ];
+    let mut handler_ref = ptr::null_mut();
+    // SAFETY: The handler is a `'static` function and the type list outlives
+    // the call.
+    let status = unsafe {
+        InstallEventHandler(
+            GetApplicationEventTarget(),
+            handle_event,
+            types.len(),
+            types.as_ptr(),
+            ptr::null_mut(),
+            &mut handler_ref,
+        )
+    };
+    if status != NO_ERR {
+        return Err(format!("InstallEventHandler failed ({status})"));
+    }
+    INSTALLED.with(|installed| installed.set(true));
+    Ok(())
 }
 
 extern "C" fn handle_event(

@@ -10,6 +10,7 @@ mod clipboard;
 mod drag;
 mod hotkey;
 mod paths;
+mod preferences;
 mod settings;
 mod shelf;
 mod ui;

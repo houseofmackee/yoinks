@@ -1,7 +1,8 @@
 //! The application delegate: owns the shelf and status item, and handles
 //! menu actions.
 
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use objc2::rc::Retained;
@@ -18,17 +19,23 @@ use crate::clipboard::{ClipboardHistory, HistoryList};
 use crate::drag::DragMonitor;
 use crate::hotkey::{Gesture, HotKey};
 use crate::paths;
+use crate::preferences::{PreferencesHooks, PreferencesWindow};
 use crate::settings::Settings;
 use crate::shelf::{Shelf, ShelfModel};
 
 #[derive(Default)]
 pub struct Ivars {
+    data_dir: OnceCell<PathBuf>,
+    /// The settings in effect; Preferences changes go through
+    /// `apply_settings`.
+    settings: RefCell<Settings>,
     shelf: OnceCell<Rc<Shelf>>,
     status_item: OnceCell<Retained<NSStatusItem>>,
-    drag_monitor: OnceCell<Option<Rc<DragMonitor>>>,
-    hotkey: OnceCell<Rc<HotKey>>,
+    drag_monitor: OnceCell<Rc<DragMonitor>>,
+    hotkey: RefCell<Option<Rc<HotKey>>>,
     clipboard: OnceCell<Rc<ClipboardHistory>>,
     history_list: OnceCell<Retained<HistoryList>>,
+    preferences: OnceCell<Retained<PreferencesWindow>>,
 }
 
 define_class!(
@@ -55,31 +62,27 @@ define_class!(
             model.set_keep_after_drag_out(settings.keep_after_drag_out);
             let shelf = Rc::new(Shelf::new(mtm, settings.shelf_edge, model));
             let drag_monitor = DragMonitor::start(Rc::clone(&shelf), &settings);
-            let shortcut = settings.shortcut();
-            if let Some(shortcut) = &shortcut {
-                let target = Rc::clone(&shelf);
-                match HotKey::register(shortcut, move |gesture| on_gesture(&target, gesture)) {
-                    Ok(hotkey) => {
-                        let _ = self.ivars().hotkey.set(hotkey);
-                    }
-                    Err(error) => eprintln!("yoinks: {error}"),
+            let clipboard = ClipboardHistory::start(&data_dir, &settings);
+            let target = Rc::clone(&shelf);
+            let list = HistoryList::new(mtm, &clipboard, move |dropped| {
+                if target.model().accept(dropped) {
+                    target.show();
+                } else {
+                    NSBeep();
                 }
-            }
-            if let Some(clipboard) = ClipboardHistory::start(&data_dir, &settings) {
-                let target = Rc::clone(&shelf);
-                let list = HistoryList::new(mtm, &clipboard, move |dropped| {
-                    if target.model().accept(dropped) {
-                        target.show();
-                    } else {
-                        NSBeep();
-                    }
-                });
-                let _ = self.ivars().clipboard.set(clipboard);
-                let _ = self.ivars().history_list.set(list);
-            }
+            });
+
             let ivars = self.ivars();
+            let _ = ivars.data_dir.set(data_dir);
+            *ivars.settings.borrow_mut() = settings;
             let _ = ivars.shelf.set(shelf);
             let _ = ivars.drag_monitor.set(drag_monitor);
+            let _ = ivars.clipboard.set(clipboard);
+            let _ = ivars.history_list.set(list);
+            if let Err(error) = self.register_hotkey() {
+                eprintln!("yoinks: {error}");
+            }
+            let shortcut = ivars.settings.borrow().shortcut();
             let _ = ivars
                 .status_item
                 .set(status_item::build(mtm, self, shortcut.as_ref()));
@@ -106,7 +109,7 @@ define_class!(
                 });
             }
             let model = self.shelf().model();
-            let clipboard = self.ivars().clipboard.get();
+            let clipboard = self.ivars().clipboard.get().filter(|c| c.is_enabled());
             if action == Some(sel!(showClipboardHistory:))
                 || action == Some(sel!(toggleClipboardPause:))
             {
@@ -165,6 +168,12 @@ define_class!(
             }
         }
 
+        #[unsafe(method(showPreferences:))]
+        fn show_preferences(&self, _sender: Option<&AnyObject>) {
+            let window = self.ivars().preferences.get_or_init(|| self.make_preferences());
+            window.show();
+        }
+
         #[unsafe(method(hideShelf:))]
         fn hide_shelf(&self, _sender: Option<&AnyObject>) {
             self.shelf().hide();
@@ -179,11 +188,96 @@ impl AppDelegate {
         unsafe { msg_send![super(this), init] }
     }
 
-    fn shelf(&self) -> &Shelf {
+    fn shelf(&self) -> &Rc<Shelf> {
         self.ivars()
             .shelf
             .get()
             .expect("shelf is created in applicationDidFinishLaunching")
+    }
+
+    /// (Re)registers the shortcut from the current settings, replacing any
+    /// previous one. A `null` hotkey just unregisters.
+    fn register_hotkey(&self) -> Result<(), String> {
+        let ivars = self.ivars();
+        // Drop the old registration first so the same keys can be reused.
+        ivars.hotkey.borrow_mut().take();
+        let Some(shortcut) = ivars.settings.borrow().shortcut() else {
+            return Ok(());
+        };
+        let shelf = Rc::clone(self.shelf());
+        let hotkey = HotKey::register(&shortcut, move |gesture| on_gesture(&shelf, gesture))?;
+        *ivars.hotkey.borrow_mut() = Some(hotkey);
+        Ok(())
+    }
+
+    /// Saves `settings` and applies them to everything that is running.
+    /// Returns an error message if the shortcut could not be registered.
+    fn apply_settings(&self, settings: Settings) -> Result<(), String> {
+        let ivars = self.ivars();
+        let old = ivars.settings.replace(settings.clone());
+        if let Some(dir) = ivars.data_dir.get()
+            && let Err(error) = settings.save(&dir.join("settings.json"))
+        {
+            eprintln!("yoinks: could not save settings: {error}");
+        }
+        let shelf = self.shelf();
+        shelf.set_edge(settings.shelf_edge);
+        shelf
+            .model()
+            .set_keep_after_drag_out(settings.keep_after_drag_out);
+        if let Some(monitor) = ivars.drag_monitor.get() {
+            monitor.update(&settings);
+        }
+        if let Some(clipboard) = ivars.clipboard.get() {
+            clipboard.apply(&settings);
+        }
+        if old.hotkey == settings.hotkey {
+            return Ok(());
+        }
+        let result = self.register_hotkey();
+        if let Some(item) = ivars.status_item.get() {
+            status_item::rebuild_menu(self.mtm(), item, self, settings.shortcut().as_ref());
+        }
+        result
+    }
+
+    fn make_preferences(&self) -> Retained<PreferencesWindow> {
+        let mtm = self.mtm();
+        let ivars = self.ivars();
+        let weak = objc2::rc::Weak::new(self);
+        let apply = {
+            let weak = weak.clone();
+            move |settings: Settings| match weak.load() {
+                Some(delegate) => delegate.apply_settings(settings),
+                None => Ok(()),
+            }
+        };
+        let suspend = move |suspended: bool| {
+            if let Some(delegate) = weak.load() {
+                if suspended {
+                    delegate.ivars().hotkey.borrow_mut().take();
+                } else if let Err(error) = delegate.register_hotkey() {
+                    eprintln!("yoinks: {error}");
+                }
+            }
+        };
+        let clipboard = ivars.clipboard.get().cloned();
+        let model = Rc::clone(self.shelf().model());
+        PreferencesWindow::new(
+            mtm,
+            ivars.settings.borrow().clone(),
+            ivars.data_dir.get().cloned().unwrap_or_default(),
+            PreferencesHooks {
+                apply: Box::new(apply),
+                suspend_hotkey: Box::new(suspend),
+                clear_clipboard: Box::new(move || {
+                    if let Some(clipboard) = &clipboard {
+                        clipboard.clear();
+                    }
+                }),
+                clear_thumbnails: Box::new(move || model.clear_thumbnails()),
+            },
+        )
     }
 }
 

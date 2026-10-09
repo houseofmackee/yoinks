@@ -6,4 +6,4 @@ mod shortcut;
 
 pub use carbon::HotKey;
 pub use gesture::Gesture;
-pub use shortcut::Shortcut;
+pub use shortcut::{Modifiers, Shortcut};

@@ -40,6 +40,25 @@ pub fn build(
         }
     }
 
+    status_item.setMenu(Some(&menu(mtm, target, shortcut)));
+    status_item
+}
+
+/// Replaces the menu, e.g. after the shortcut changed.
+pub fn rebuild_menu(
+    mtm: MainThreadMarker,
+    status_item: &NSStatusItem,
+    target: &AnyObject,
+    shortcut: Option<&Shortcut>,
+) {
+    status_item.setMenu(Some(&menu(mtm, target, shortcut)));
+}
+
+fn menu(
+    mtm: MainThreadMarker,
+    target: &AnyObject,
+    shortcut: Option<&Shortcut>,
+) -> Retained<NSMenu> {
     let menu = NSMenu::new(mtm);
     let target = Some(target);
     // The title is updated in `validateMenuItem:` to "Show"/"Hide".
@@ -75,9 +94,7 @@ pub fn build(
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     // No target: `terminate:` travels the responder chain to NSApplication.
     menu.addItem(&menu_item(mtm, "Quit Yoinks", sel!(terminate:), "q", None));
-    status_item.setMenu(Some(&menu));
-
-    status_item
+    menu
 }
 
 fn modifier_flags(shortcut: &Shortcut) -> NSEventModifierFlags {

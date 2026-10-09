@@ -68,7 +68,12 @@ src/
     gesture.rs       pure press / long press / double press state machine
     carbon.rs        RegisterEventHotKey registration and dispatch
   settings.rs        typed settings with serde defaults (settings.json)
-  settings/          (Phase 8) preferences UI
+  preferences/
+    window.rs        tabs, actions, live apply
+    recorder.rs      shortcut recorder button
+    app_list.rs      editable app list (+ from running apps)
+    form.rs          layout helpers
+    storage.rs       disk usage
   integrations/
     cli.rs           `yoinks add <path>` via a tiny IPC socket or URL scheme
     url_scheme.rs    yoinks://add?path=...
@@ -235,15 +240,25 @@ Key design points:
 - Widget: a WidgetKit extension (Swift add-on, see Phase 9) showing recent
   clips, like Yoink's Notification Center widget.
 
-### Phase 8: Preferences
-- The settings model and `settings.json` already exist (Phase 4); this
-  phase adds the window and live updates.
-- General: launch at login (`SMAppService.mainApp`), shelf edge, appearance
-  mode, keep items after drag out, show in Dock toggle.
-- Shortcut: hotkey recorder and gesture timing.
-- Clipboard: enable, history size, ignored apps.
-- Apps: per-app auto-show suppression.
-- Storage: cache location, cache size, "clear cached files".
+### Phase 8: Preferences (done)
+- [x] Preferences window (menu bar > Preferences…), a non-activating panel
+  so it works without bringing Yoinks to the front. Every change applies
+  immediately and is saved to `settings.json`.
+- [x] General: open at login (`SMAppService.mainApp`, with a note when
+  approval is needed), shelf edge, when to show the shelf during drags,
+  keep items after dragging out, apps whose drags never show the shelf
+  (picked from running apps).
+- [x] Shortcut: recorder (click, press keys; Delete clears, Escape
+  cancels), "Use ⌃⌥Y" reset, a warning for well-known macOS shortcuts
+  (Spotlight, screenshots, Copy/Paste, ...) and for registration failures.
+  The global shortcut is suspended while recording.
+- [x] Clipboard: on/off, history size, apps never recorded, clear unpinned.
+- [x] Storage: data folder with Show in Finder, space used by shelf copies,
+  thumbnails and clipboard payloads, Clear Thumbnails.
+- [x] Live updates: shelf edge, drag monitor, keep mode, clipboard watcher
+  and shortcut (re-registered, menu rebuilt) without relaunching.
+- Deferred: a "show in Dock" toggle (Yoinks has no app menu to show) and
+  adjustable gesture timing.
 
 ### Phase 9: Integrations
 - **CLI:** `yoinks add <paths...>`, `yoinks list`, `yoinks clear`. The binary

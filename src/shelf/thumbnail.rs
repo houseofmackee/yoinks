@@ -78,6 +78,12 @@ impl Thumbnails {
         None
     }
 
+    /// Deletes every cached thumbnail and forgets past requests.
+    pub fn clear(&self) {
+        self.requested.borrow_mut().clear();
+        self.remove_orphans(&HashSet::new());
+    }
+
     pub fn remove(&self, id: Uuid) {
         let _ = fs::remove_file(self.path(id));
     }

@@ -156,6 +156,12 @@ impl ShelfModel {
         self.thumbnails.get_or_request(mtm, item, &self.this)
     }
 
+    /// Deletes all cached thumbnails; they are regenerated as needed.
+    pub fn clear_thumbnails(&self) {
+        self.thumbnails.clear();
+        self.reload();
+    }
+
     pub(super) fn thumbnail_finished(&self, _id: Uuid, ok: bool) {
         if ok {
             self.reload();

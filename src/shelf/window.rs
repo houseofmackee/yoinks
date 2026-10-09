@@ -101,7 +101,7 @@ enum Visibility {
 pub struct Shelf {
     panel: Retained<ShelfPanel>,
     model: Rc<ShelfModel>,
-    edge: ShelfEdge,
+    edge: Cell<ShelfEdge>,
     visibility: Rc<Cell<Visibility>>,
     /// Frames for the screen the shelf was last shown on, so it hides back
     /// toward the same edge even if the cursor moved to another display.
@@ -118,7 +118,7 @@ impl Shelf {
         Self {
             panel,
             model,
-            edge,
+            edge: Cell::new(edge),
             visibility: Rc::new(Cell::new(Visibility::Hidden)),
             frames: Cell::new(None),
         }
@@ -129,7 +129,12 @@ impl Shelf {
     }
 
     pub fn edge(&self) -> ShelfEdge {
-        self.edge
+        self.edge.get()
+    }
+
+    /// Takes effect the next time the shelf is shown.
+    pub fn set_edge(&self, edge: ShelfEdge) {
+        self.edge.set(edge);
     }
 
     pub fn is_visible(&self) -> bool {
@@ -158,20 +163,20 @@ impl Shelf {
     /// Slides the shelf in at its screen edge and gives it keyboard focus,
     /// for when the user asked for it (shortcut, menu, relaunch).
     pub fn show(&self) {
-        self.present(|visible, _| shelf_frames(visible, self.edge), true);
+        self.present(|visible, _| shelf_frames(visible, self.edge.get()), true);
     }
 
     /// Slides the shelf in at its screen edge without taking keyboard focus,
     /// for automatic appearance during a drag: typing must keep going to the
     /// app the user is working in.
     pub fn appear_at_edge(&self) {
-        self.present(|visible, _| shelf_frames(visible, self.edge), false);
+        self.present(|visible, _| shelf_frames(visible, self.edge.get()), false);
     }
 
     /// Fades the shelf in beside the cursor, without taking keyboard focus.
     pub fn appear_at_cursor(&self) {
         self.present(
-            |visible, cursor| cursor_frames(visible, cursor, self.edge),
+            |visible, cursor| cursor_frames(visible, cursor, self.edge.get()),
             false,
         );
     }

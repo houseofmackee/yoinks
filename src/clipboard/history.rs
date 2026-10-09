@@ -173,6 +173,17 @@ impl History {
         }
     }
 
+    /// Changes the maximum number of unpinned clips, returning any dropped.
+    #[must_use]
+    pub fn set_limit(&mut self, limit: usize) -> Vec<Clip> {
+        self.limit = limit;
+        let removed = self.trim();
+        if !removed.is_empty() {
+            self.save();
+        }
+        removed
+    }
+
     pub fn clips(&self) -> &[Clip] {
         &self.clips
     }
@@ -356,6 +367,17 @@ mod tests {
             1,
             "now two unpinned with a limit of one"
         );
+    }
+
+    #[test]
+    fn lowering_the_limit_trims_oldest() {
+        let mut h = History::in_memory(10);
+        for s in ["a", "b", "c"] {
+            let _ = h.push(text(s));
+        }
+        let removed = h.set_limit(1);
+        assert_eq!(removed.len(), 2);
+        assert_eq!(titles(&h), ["c"]);
     }
 
     #[test]
