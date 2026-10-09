@@ -8,9 +8,9 @@ use objc2::rc::{Retained, Weak};
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSBackingStoreType, NSButton, NSControlStateValueOff, NSControlStateValueOn, NSPanel,
-    NSPopUpButton, NSTabView, NSTabViewDelegate, NSTabViewItem, NSTextField, NSView,
-    NSWindowStyleMask, NSWorkspace,
+    NSBackingStoreType, NSButton, NSControlStateValueOff, NSControlStateValueOn,
+    NSLayoutConstraint, NSPanel, NSPopUpButton, NSTabView, NSTabViewDelegate, NSTabViewItem,
+    NSTextField, NSView, NSWindowStyleMask, NSWorkspace,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
@@ -64,6 +64,9 @@ pub struct PrefsIvars {
     sizes: OnceCell<Retained<NSTextField>>,
     /// App list controllers; tables only hold them weakly.
     lists: RefCell<Vec<Retained<AppList>>>,
+    /// Content height each tab needs, in tab order, so the window can
+    /// resize to the selected tab.
+    tab_heights: RefCell<Vec<f64>>,
 }
 
 define_class!(
@@ -180,8 +183,11 @@ define_class!(
     unsafe impl NSTabViewDelegate for PreferencesWindow {
         // Disk usage changes while the window is open.
         #[unsafe(method(tabView:didSelectTabViewItem:))]
-        fn tab_selected(&self, _tabs: &NSTabView, _item: Option<&NSTabViewItem>) {
+        fn tab_selected(&self, tabs: &NSTabView, item: Option<&NSTabViewItem>) {
             self.refresh_sizes();
+            if let Some(item) = item {
+                self.fit_window_to_tab(tabs.indexOfTabViewItem(item));
+            }
         }
     }
 );
@@ -204,6 +210,7 @@ impl PreferencesWindow {
             shortcut_note: OnceCell::new(),
             sizes: OnceCell::new(),
             lists: RefCell::default(),
+            tab_heights: RefCell::default(),
         });
         // SAFETY: NSObject's `init` has the correct signature.
         let this: Retained<Self> = unsafe { msg_send![super(this), init] };
@@ -283,6 +290,27 @@ impl PreferencesWindow {
         }
     }
 
+    /// Resizes the window to tab `index`, keeping its top edge in place.
+    fn fit_window_to_tab(&self, index: isize) {
+        let (Some(window), Ok(index)) = (self.ivars().window.get(), usize::try_from(index)) else {
+            return;
+        };
+        let Some(height) = self.ivars().tab_heights.borrow().get(index).copied() else {
+            return;
+        };
+        let Some(content) = window.contentView() else {
+            return;
+        };
+        let delta = height - content.frame().size.height;
+        if delta.abs() < 1.0 {
+            return;
+        }
+        let mut frame = window.frame();
+        frame.size.height += delta;
+        frame.origin.y -= delta;
+        window.setFrame_display_animate(frame, true, window.isVisible());
+    }
+
     fn refresh_login(&self, error: Option<String>) {
         // SAFETY: Reading this app's login item status.
         let status = unsafe { SMAppService::mainAppService().status() };
@@ -329,17 +357,47 @@ impl PreferencesWindow {
             NSTabView::alloc(mtm),
             NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(WIDTH, HEIGHT)),
         );
-        for (label, view) in [
+        // Each tab's form is pinned to the top of its page; the window is
+        // sized below to fit the tallest one.
+        let mut heights = Vec::new();
+        for (label, form) in [
             ("General", self.general_tab()),
             ("Shortcut", self.shortcut_tab()),
             ("Clipboard", self.clipboard_tab()),
             ("Storage", self.storage_tab()),
         ] {
+            heights.push(form.fittingSize().height);
+            let page = NSView::new(mtm);
+            form.setTranslatesAutoresizingMaskIntoConstraints(false);
+            page.addSubview(&form);
+            NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[
+                form.topAnchor().constraintEqualToAnchor(&page.topAnchor()),
+                form.leadingAnchor()
+                    .constraintEqualToAnchor(&page.leadingAnchor()),
+                form.trailingAnchor()
+                    .constraintEqualToAnchor(&page.trailingAnchor()),
+            ]));
             let item = NSTabViewItem::new();
             item.setLabel(&NSString::from_str(label));
-            item.setView(Some(&view));
+            item.setView(Some(&page));
             tabs.addTabViewItem(&item);
         }
+        // The tab strip and border take the difference between the tab
+        // view's frame and its content area.
+        let chrome = HEIGHT - tabs.contentRect().size.height;
+        // A little extra: fitting sizes run slightly short for wrapped text.
+        const PADDING: f64 = 32.0;
+        *self.ivars().tab_heights.borrow_mut() = heights
+            .iter()
+            .map(|h| (h + chrome + PADDING).ceil())
+            .collect();
+        let height = self
+            .ivars()
+            .tab_heights
+            .borrow()
+            .first()
+            .copied()
+            .unwrap_or(HEIGHT);
         // The tab view holds its delegate weakly; we own the window.
         tabs.setDelegate(Some(ProtocolObject::from_ref(self)));
 
@@ -361,6 +419,7 @@ impl PreferencesWindow {
         window.setTitle(ns_string!("Yoinks Preferences"));
         window.setHidesOnDeactivate(false);
         window.setContentView(Some(&tabs));
+        window.setContentSize(NSSize::new(WIDTH, height));
         let _ = self.ivars().window.set(window);
         for label in [
             self.ivars().login_note.get(),
