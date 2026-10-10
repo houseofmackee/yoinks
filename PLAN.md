@@ -333,6 +333,9 @@ Key design points:
   appears beside the shelf.
 
 ### Feedback from first use (done)
+- [x] Revised: auto-hide only applies to an empty shelf. A shelf with items
+  stays until the user hides it; emptying it (drag out, remove, clear)
+  arms the auto-hide. Preferences label: "Hide the shelf once it's empty".
 - [x] Hide after use (`hide_after_use`, on by default; Preferences >
   General): after a drop, a drag-out, or something added from the command
   line, Services or the shortcut, the shelf slides away once the pointer

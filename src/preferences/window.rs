@@ -483,7 +483,7 @@ impl PreferencesWindow {
         );
         let hide = form::checkbox(
             mtm,
-            "Hide the shelf after using it",
+            "Hide the shelf once it's empty",
             target,
             sel!(hideAfterUseChanged:),
         );
@@ -494,8 +494,9 @@ impl PreferencesWindow {
         });
         let hide_note = note(
             mtm,
-            "It slides away about a second after the pointer leaves it. Drag the shelf by \
-             its background to move it; the gear menu puts it back at the edge.",
+            "It slides away about a second after the pointer leaves it. With items on it, \
+             it stays until you hide it (Escape, the shortcut or the menu). Drag the shelf \
+             by its background to move it; the gear menu puts it back at the edge.",
             NOTE_WIDTH,
         );
         let keep = form::checkbox(
@@ -525,7 +526,7 @@ impl PreferencesWindow {
             up(&*indented(mtm, &icon_note)),
             up(&*row(mtm, "Shelf edge:", &edge)),
             up(&*row(mtm, "Show the shelf during drags:", &appear)),
-            up(&*row(mtm, "After use:", &hide)),
+            up(&*row(mtm, "Auto-hide:", &hide)),
             up(&*indented(mtm, &hide_note)),
             up(&*row(mtm, "After dragging out:", &keep)),
             up(&*row(mtm, "Don't show it for drags from:", &apps_view)),

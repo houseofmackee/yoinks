@@ -199,8 +199,9 @@ impl Shelf {
         }
     }
 
-    /// Hides the shelf once the pointer has been away from it for `after`
-    /// (if "hide after use" is on). Called after the shelf was used.
+    /// Hides the shelf once it is empty and the pointer has been away from
+    /// it for `after` (if `hide_after_use` is on). Called after the shelf was
+    /// used. A shelf with items is left alone.
     pub fn arm_auto_hide(&self, after: Duration) {
         if !self.hide_after_use.get() || self.visibility.get() != Visibility::Shown {
             return;
@@ -236,6 +237,12 @@ impl Shelf {
             self.disarm_auto_hide();
             return;
         }
+        // A shelf with items stays until the user hides it; watching
+        // resumes when it becomes empty (see `ViewEvent::Changed`).
+        if !self.model.is_empty() {
+            self.disarm_auto_hide();
+            return;
+        }
         // Not while the pointer is on the shelf, a drag or click is in
         // progress, or Quick Look is showing one of its items.
         let busy = self.contains_mouse()
@@ -256,6 +263,9 @@ impl Shelf {
     fn view_event(&self, event: ViewEvent) {
         match event {
             ViewEvent::Exited | ViewEvent::Used => self.arm_auto_hide(HIDE_AFTER_USE),
+            // The last item was dragged out, removed or cleared.
+            ViewEvent::Changed if self.model.is_empty() => self.arm_auto_hide(HIDE_AFTER_USE),
+            ViewEvent::Changed => {}
             ViewEvent::Moved(origin) => {
                 self.custom_origin.set(Some(origin));
                 let frame = self.panel.frame();

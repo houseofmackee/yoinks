@@ -56,6 +56,8 @@ pub enum ViewEvent {
     Used,
     /// The user dragged the shelf to a new place (bottom-left corner).
     Moved(NSPoint),
+    /// The shelf's contents changed (items added, removed or cleared).
+    Changed,
 }
 
 type EventHandler = Box<dyn Fn(ViewEvent)>;
@@ -555,6 +557,7 @@ impl ShelfContentView {
             ivars.list.addArrangedSubview(&tile);
         }
         ivars.placeholder.setHidden(!entries.is_empty());
+        self.notify(ViewEvent::Changed);
         *ivars.order.borrow_mut() = entries.iter().map(|entry| entry.id).collect();
         let selected = ivars
             .selected

@@ -41,7 +41,9 @@ pub struct Settings {
     /// Set when the user drags the shelf somewhere; it then appears there
     /// instead of at `shelf_edge`. `null` puts it back at the edge.
     pub shelf_position: Option<ShelfPosition>,
-    /// Slide the shelf away once it has been used and the pointer leaves it.
+    /// Slide the shelf away once it is empty and the pointer leaves it. A
+    /// shelf with items stays until the user hides it. (Saved as
+    /// `hide_after_use` for compatibility with existing settings files.)
     pub hide_after_use: bool,
     pub appear_on_drag: AppearMode,
     /// Show the tray icon in the menu bar. When hidden, the same menu is

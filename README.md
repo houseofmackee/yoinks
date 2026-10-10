@@ -11,8 +11,8 @@ Requires macOS 13 or later on Apple Silicon.
 
 - **Shelf that appears when you drag.** Start dragging anything and the shelf
   slides in at the screen edge (or near the cursor, or only when you approach
-  the edge). It hides again if you don't use it, and slides away about a
-  second after you're done with it.
+  the edge). It hides again if you don't use it. With items on it, it stays
+  until you hide it; once it's empty again it slides away by itself.
 - **Put it anywhere.** Drag the shelf by its background to move it; it comes
   back to that spot. "Move Shelf Back to Edge" undoes it.
 - **Holds almost anything.** Files (as references, never copied), Mail and
@@ -40,7 +40,7 @@ Requires macOS 13 or later on Apple Silicon.
 1. Download `Yoinks-<version>.dmg` from
    [Releases](https://github.com/houseofmackee/yoinks/releases) (the current
    pre-release is
-   [0.1.1](https://github.com/houseofmackee/yoinks/releases/tag/v0.1.1)), open
+   [0.1.2](https://github.com/houseofmackee/yoinks/releases/tag/v0.1.2)), open
    it and drag Yoinks into Applications. To build it yourself, see
    [Building](#building).
 2. Builds are not signed or notarized yet, so macOS blocks the first launch.
