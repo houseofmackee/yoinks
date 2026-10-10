@@ -37,8 +37,12 @@ Requires macOS 13 or later on Apple Silicon.
 
 ## Install
 
-1. Download `Yoinks-<version>.dmg` (built by CI, or see
-   [Building](#building)) and drag Yoinks into Applications.
+1. Download `Yoinks-<version>.dmg` from
+   [Releases](https://github.com/houseofmackee/yoinks/releases) (the current
+   pre-release is
+   [0.1.1](https://github.com/houseofmackee/yoinks/releases/tag/v0.1.1)), open
+   it and drag Yoinks into Applications. To build it yourself, see
+   [Building](#building).
 2. Builds are not signed or notarized yet, so macOS blocks the first launch.
    Open Yoinks once, then go to System Settings > Privacy & Security and
    choose **Open Anyway**.
