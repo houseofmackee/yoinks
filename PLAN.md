@@ -25,11 +25,11 @@ Spaces and full-screen apps.
 | --- | --- | --- |
 | Language | Rust (edition 2024) | |
 | macOS bindings | `objc2`, `objc2-foundation`, `objc2-app-kit` | Type-safe, maintained, covers AppKit fully |
-| Extra frameworks | `objc2-quick-look-ui`, `objc2-uniform-type-identifiers`, `objc2-quick-look-thumbnailing`, `block2` | Added as each phase needs them |
-| Persistence | `serde` + `serde_json` (or `rusqlite` if history grows) | Stored under `~/Library/Application Support/Yoinks` |
-| Global hotkeys | Carbon `RegisterEventHotKey` via FFI, or `global-hotkey` crate | No Accessibility permission needed for Carbon hotkeys |
-| Logging | `tracing` + `tracing-oslog` | Shows up in Console.app |
-| Bundling | `scripts/bundle.sh` + `macos/Info.plist`, `scripts/make-dmg.sh` | Produces `Yoinks.app` and a `.dmg`; Developer ID signing and notarization still to do |
+| Extra frameworks | `objc2-quick-look-ui`, `objc2-quick-look-thumbnailing`, `objc2-uniform-type-identifiers`, `objc2-service-management`, `block2`, `dispatch2` | Added as each phase needed them |
+| Persistence | `serde` + `serde_json` | Stored under `~/Library/Application Support/Yoinks`; `rusqlite` only if history ever outgrows JSON |
+| Global hotkeys | Carbon `RegisterEventHotKey` via FFI | No Accessibility or Input Monitoring permission needed |
+| Logging | `eprintln!` to stderr | `tracing` + `tracing-oslog` (Console.app) remains an option |
+| Bundling | `scripts/bundle.sh` + `macos/Info.plist`, `scripts/make-dmg.sh`, `scripts/dist.sh` | Releases are built, signed with the self-signed "Yoinks Release" certificate and published by `.github/workflows/release.yml`; Developer ID signing and notarization still to do |
 | Minimum OS | macOS 13 Ventura | Unlocks modern APIs (SMAppService, App Intents) |
 
 ## 3. Architecture
@@ -173,8 +173,8 @@ Key design points:
 - [x] Per-app suppression: `ignored_apps` bundle ids (the frontmost app at
   drag start); the menu bar and shortcut still work.
 - [x] Settings moved forward from Phase 8: typed `settings.json` in the data
-  folder with serde defaults, written on first launch. Changes take effect
-  on relaunch until the Preferences window exists.
+  folder with serde defaults, written on first launch. (Since Phase 8,
+  changes made in Preferences apply immediately.)
 
 ### Phase 5: Global keyboard shortcut (done)
 - [x] `hotkey` setting, default `control+option+Y` (`null` turns it off),
@@ -194,9 +194,8 @@ Key design points:
   modifier unless it is a function key. Invalid values are reported and
   ignored.
 - Known limit: macOS does not report a clash with another app's shortcut;
-  both apps receive it. The Phase 8 recorder should warn about common
-  system shortcuts.
-- Shortcut recorder control: Phase 8.
+  both apps receive it. The Phase 8 recorder warns about well-known macOS
+  shortcuts.
 
 ### Phase 6: Previews (done)
 - [x] Tile thumbnails from `QLThumbnailGenerator`, written straight to
@@ -242,8 +241,9 @@ Key design points:
   to the app the user was in. It closes on Escape, a click elsewhere, or
   an app switch. (An NSPopover was tried first, but macOS 14+ refuses to
   activate a background menu bar app, so typing went elsewhere.)
-- Widget: a WidgetKit extension (Swift add-on, see Phase 9) showing recent
-  clips, like Yoink's Notification Center widget.
+- Not done: a WidgetKit extension showing recent clips, like Yoink's
+  Notification Center widget. Part of the deferred Swift add-ons
+  (Phase 9b).
 
 ### Phase 8: Preferences (done)
 - [x] Preferences window (menu bar > Preferences…), a non-activating panel
@@ -301,7 +301,7 @@ Key design points:
   available; without one, only the Share extension and Shortcuts actions
   could be tried, ad hoc and on one Mac.
 
-### Phase 10: Packaging and distribution (done except signing)
+### Phase 10: Packaging and distribution (done except Developer ID signing)
 - [x] Apple Silicon only (decision 2026-10-10): no universal binary.
   `LSArchitecturePriority` is arm64.
 - [x] App icon drawn by `scripts/make-icon.swift` into `macos/AppIcon.icns`
@@ -311,19 +311,22 @@ Key design points:
 - [x] `scripts/make-dmg.sh`: release bundle plus Applications shortcut in a
   compressed APFS disk image, `target/release/Yoinks-<version>.dmg`.
 - [x] GitHub Actions (`.github/workflows/ci.yml`, Apple Silicon runner):
-  `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, disk image
-  uploaded as an artifact. Not run yet: the repository has no remote.
+  `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`. Running on
+  github.com/houseofmackee/yoinks since 2026-10-10.
 - [x] Later (2026-10-11), aligned with CleanShotZ: CI runs on master and pull
   requests (clippy also in release, a release bundle build, `cargo deny`),
   and `.github/workflows/release.yml` builds, signs with the self-signed
-  "Yoinks Release" certificate and publishes when a `v*` tag is pushed.
-  Developer ID signing and notarization are still to do.
+  "Yoinks Release" certificate (hardened runtime) and publishes the DMG,
+  zip and `SHA256SUMS.txt` when a `v*` tag is pushed; hyphenated tags
+  become pre-releases. First used for v0.1.3-beta.1. The certificate is in
+  the login keychain and the repository secrets.
 - [x] README with install, usage, command line, settings and build steps.
-- To do, needs a Developer ID: hardened runtime, Developer ID signing,
-  notarization with `notarytool` and stapling, then signing in CI with
-  secrets.
-- To do after signing: automatic updates with Sparkle (EdDSA-signed
-  appcast, hosted on GitHub Releases), and a release workflow on tags.
+- To do, needs a Developer ID: switch release signing from the
+  self-signed certificate to a Developer ID, notarize with `notarytool`
+  and staple, in the release workflow. That removes the "Open Anyway" step
+  for people who download Yoinks.
+- To do after that: automatic updates with Sparkle (EdDSA-signed appcast,
+  hosted on GitHub Releases, published by the release workflow).
 - Swift add-ons (Phase 9b) would be built and embedded here once signing
   exists.
 
@@ -358,27 +361,28 @@ Key design points:
 
 ## 5. Improvements over Yoink
 
-| Idea | Description |
-| --- | --- |
-| Multiple named shelves | Switch between shelves (for example "Invoices", "Design assets"), each persisted separately |
-| Pinned items | Pin items that should never be auto-removed after dragging out |
-| Search and filter | Type to filter shelf and clipboard history by name, kind or content |
-| Quick actions on items | Right-click: rename, compress to zip, convert image format, resize image, copy path, reveal in Finder, open with |
-| Text snippet editing | Edit a text clipping inline before dragging it out |
-| Auto-expiry | Optionally remove items older than N hours/days |
-| OCR on images | Use the Vision framework to copy text out of an image or screenshot |
-| Screenshot capture | Optionally watch the screenshot folder and add new screenshots automatically |
-| Keyboard-only workflow | Arrow keys to select, Return to open, ⌘C to copy, Delete to remove, ⌘V to paste into the shelf |
-| Paste to shelf | ⌘V while the shelf is focused adds the clipboard contents |
-| Open source CLI + scripting | First-class CLI and JSON output for scripting (`yoinks list --json`) |
-| Sensitive content redaction | Detect and skip likely secrets (API keys, tokens) in clipboard history |
-| Low-resource mode | Disable thumbnails and polling on battery power |
+| Idea | Description | Status |
+| --- | --- | --- |
+| Multiple named shelves | Switch between shelves (for example "Invoices", "Design assets"), each persisted separately | To do |
+| Pinned items | Pin shelf items so they stay after being dragged out | Clipboard history has pins; the shelf does not |
+| Search and filter | Type to filter shelf and clipboard history by name, kind or content | Clipboard history has search; the shelf does not |
+| Quick actions on items | Right-click: rename, compress to zip, convert image format, resize image, copy path, open with | Reveal in Finder and Open exist; the rest to do |
+| Text snippet editing | Edit a text clipping inline before dragging it out | To do |
+| Auto-expiry | Optionally remove items older than N hours/days | To do |
+| OCR on images | Use the Vision framework to copy text out of an image or screenshot | To do |
+| Screenshot capture | Optionally watch the screenshot folder and add new screenshots automatically | To do |
+| Keyboard-only workflow | Arrow keys to select, Return to open, ⌘C to copy, Delete to remove, ⌘V to paste into the shelf | Arrows, Return, Delete, Space and Escape done; ⌘C and ⌘V to do |
+| Paste to shelf | ⌘V while the shelf is focused adds the clipboard contents | To do (the shortcut's double press already adds the clipboard) |
+| Open source CLI + scripting | First-class CLI and JSON output for scripting (`yoinks list --json`) | Done (Phase 9a) |
+| Sensitive content redaction | Detect and skip likely secrets (API keys, tokens) in clipboard history | To do (concealed and password manager copies are already skipped) |
+| Low-resource mode | Disable thumbnails and polling on battery power | To do |
 
 ## 6. Testing strategy
 
 - **Unit tests** for pure Rust logic: `ShelfStore`, settings migration,
   clipboard filters, move/copy decision table, hotkey gesture state machine.
-- **Integration tests** for the CLI and IPC socket.
+- **Integration tests** for the CLI and IPC socket (to do; the command
+  parsing and protocol have unit tests).
 - **Manual QA checklist** per release: drag from Finder, Safari, Mail (file
   promises), Photos, Notes; full-screen apps; multiple displays; Spaces;
   Stage Manager; external volumes.
@@ -391,8 +395,8 @@ Key design points:
 | M1: Usable shelf | 1, 2, 3 | Manually opened shelf with drop in and drag out |
 | M2: Yoink parity core | 4, 5, 6 | Auto-appearing shelf, hotkey gestures, previews |
 | M3: Clipboard + settings | 7, 8 | Clipboard history and a full preferences window |
-| M4: Integrations | 9 | CLI, URL scheme, Services, Continuity Camera |
-| M5: Ship | 10 | `Yoinks.app` and `.dmg` with CI; signing and notarization pending |
+| M4: Integrations | 9a (9b deferred) | CLI, URL scheme, Services, Continuity Camera |
+| M5: Ship | 10 | Releases built, signed (self-signed) and published by GitHub Actions; Developer ID signing and notarization pending |
 | M6: Beyond Yoink | Section 5 | Selected improvements, prioritized after M5 |
 
 ## 8. Decisions and future options
