@@ -69,6 +69,8 @@ impl Response {
 pub struct EntryInfo {
     pub id: String,
     pub title: String,
+    #[serde(default)]
+    pub pinned: bool,
     pub items: Vec<ItemInfo>,
 }
 

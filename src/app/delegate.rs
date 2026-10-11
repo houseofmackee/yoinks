@@ -183,7 +183,8 @@ define_class!(
                 }
                 clipboard.is_some()
             } else if action == Some(sel!(clearShelf:)) {
-                !model.is_empty()
+                // Clear Shelf leaves pinned items alone.
+                model.has_unpinned()
             } else if action == Some(sel!(resetShelfPosition:)) {
                 self.shelf().has_custom_position()
             } else if action == Some(sel!(recallItems:)) {

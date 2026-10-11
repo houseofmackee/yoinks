@@ -64,6 +64,8 @@ pub struct Settings {
     /// Bundle identifiers of apps whose copies are never recorded (password
     /// managers are always skipped).
     pub clipboard_ignored_apps: Vec<String>,
+    /// Skip copies that look like passwords, API keys or tokens.
+    pub clipboard_skip_secrets: bool,
 }
 
 impl Default for Settings {
@@ -80,6 +82,7 @@ impl Default for Settings {
             clipboard_history: true,
             clipboard_history_size: 50,
             clipboard_ignored_apps: Vec::new(),
+            clipboard_skip_secrets: true,
         }
     }
 }

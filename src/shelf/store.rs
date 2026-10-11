@@ -109,10 +109,23 @@ impl ShelfStore {
         Some(entry)
     }
 
+    /// Removes every unpinned entry and returns them.
     pub fn clear(&mut self) -> Vec<Entry> {
-        let entries = std::mem::take(&mut self.entries);
+        let (pinned, removed) = std::mem::take(&mut self.entries)
+            .into_iter()
+            .partition(|entry| entry.pinned);
+        self.entries = pinned;
         self.save();
-        entries
+        removed
+    }
+
+    pub fn has_unpinned(&self) -> bool {
+        self.entries.iter().any(|entry| !entry.pinned)
+    }
+
+    /// Pins or unpins an entry. Returns false if it does not exist.
+    pub fn set_pinned(&mut self, id: Uuid, pinned: bool) -> bool {
+        self.update(id, |entry| entry.pinned = pinned)
     }
 
     /// Applies `f` to an entry and saves. Returns false if it does not exist.
@@ -136,13 +149,14 @@ impl ShelfStore {
         if !entry.is_stack() || entry.has_pending() {
             return false;
         }
-        let added_at = entry.added_at;
+        let (added_at, pinned) = (entry.added_at, entry.pinned);
         let singles: Vec<Entry> = self.entries[index]
             .items
             .iter()
             .map(|item| {
                 let mut single = Entry::new(vec![item.clone()]);
                 single.added_at = added_at;
+                single.pinned = pinned;
                 single
             })
             .collect();
@@ -296,6 +310,48 @@ mod tests {
         store.insert(pending);
         assert!(!store.unstack(single_id));
         assert!(!store.unstack(pending_id));
+    }
+
+    #[test]
+    fn clear_keeps_pinned_entries() {
+        let (mut store, saved) = store();
+        let keep = Entry::new(vec![file("keep")]);
+        let keep_id = keep.id;
+        store.insert(keep);
+        store.insert(Entry::new(vec![file("temp")]));
+        assert!(store.set_pinned(keep_id, true));
+        assert!(store.has_unpinned());
+        let removed = store.clear();
+        assert_eq!(
+            removed.iter().map(Entry::title).collect::<Vec<_>>(),
+            ["temp"]
+        );
+        assert_eq!(store.entries().len(), 1);
+        assert!(!store.has_unpinned());
+        assert!(saved.0.borrow()[0].pinned, "the pin is saved");
+        assert!(!store.set_pinned(Uuid::new_v4(), true));
+    }
+
+    #[test]
+    fn unstacking_keeps_the_pin() {
+        let (mut store, _) = store();
+        let stack = Entry::new(vec![file("x"), file("y")]);
+        let id = stack.id;
+        store.insert(stack);
+        store.set_pinned(id, true);
+        store.unstack(id);
+        assert!(store.entries().iter().all(|entry| entry.pinned));
+    }
+
+    #[test]
+    fn pin_is_omitted_from_json_when_false() {
+        let entry = Entry::new(vec![file("a")]);
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(!json.contains("pinned"));
+        let mut pinned = entry.clone();
+        pinned.pinned = true;
+        let back: Entry = serde_json::from_str(&serde_json::to_string(&pinned).unwrap()).unwrap();
+        assert!(back.pinned);
     }
 
     #[test]

@@ -37,6 +37,7 @@ fn main() -> std::process::ExitCode {
 
     // NSApplication holds its delegate weakly; `delegate` lives until `run`
     // returns, which is for the lifetime of the process.
+    ui::install_edit_menu(mtm);
     let delegate = AppDelegate::new(mtm);
     app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
 

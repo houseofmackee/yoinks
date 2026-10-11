@@ -55,6 +55,8 @@ src/
     bookmark.rs      file bookmarks
     promise.rs       file promise + content writer for dragging content out
     recent.rs        recall buffer of dragged-out entries
+    actions.rs       quick actions: zip, image convert/resize, rename rules
+    prompt.rs        non-activating Rename prompt
   drag/
     monitor.rs       shows/hides the shelf for system-wide drags
     tracker.rs       pure drag recognition state machine
@@ -62,6 +64,7 @@ src/
     watcher.rs       NSPasteboard changeCount polling, recording, copy back
     history.rs       pure model: dedupe, pins, limit, search, persistence
     filters.rs       concealed markers, password managers, ignored apps
+    secrets.rs       detects likely passwords, API keys and tokens
     panel.rs         non-activating history panel (search + table)
   hotkey/
     shortcut.rs      parse "control+option+Y" into Carbon key code + modifiers
@@ -364,17 +367,17 @@ Key design points:
 | Idea | Description | Status |
 | --- | --- | --- |
 | Multiple named shelves | Switch between shelves (for example "Invoices", "Design assets"), each persisted separately | To do |
-| Pinned items | Pin shelf items so they stay after being dragged out | Clipboard history has pins; the shelf does not |
+| Pinned items | Pin shelf items so they stay after being dragged out | Done: pin badge, kept after drag out and Clear Shelf |
 | Search and filter | Type to filter shelf and clipboard history by name, kind or content | Clipboard history has search; the shelf does not |
-| Quick actions on items | Right-click: rename, compress to zip, convert image format, resize image, copy path, open with | Reveal in Finder and Open exist; the rest to do |
+| Quick actions on items | Right-click: rename, compress to zip, convert image format, resize image, copy path, open with | Done (rename is for items Yoinks saved; results are new items) |
 | Text snippet editing | Edit a text clipping inline before dragging it out | To do |
 | Auto-expiry | Optionally remove items older than N hours/days | To do |
 | OCR on images | Use the Vision framework to copy text out of an image or screenshot | To do |
 | Screenshot capture | Optionally watch the screenshot folder and add new screenshots automatically | To do |
-| Keyboard-only workflow | Arrow keys to select, Return to open, ⌘C to copy, Delete to remove, ⌘V to paste into the shelf | Arrows, Return, Delete, Space and Escape done; ⌘C and ⌘V to do |
+| Keyboard-only workflow | Arrow keys to select, Return to open, ⌘C to copy, Delete to remove, ⌘V to paste into the shelf | Arrows, Return, Delete, Space, Escape and ⌘C done; ⌘V to do |
 | Paste to shelf | ⌘V while the shelf is focused adds the clipboard contents | To do (the shortcut's double press already adds the clipboard) |
 | Open source CLI + scripting | First-class CLI and JSON output for scripting (`yoinks list --json`) | Done (Phase 9a) |
-| Sensitive content redaction | Detect and skip likely secrets (API keys, tokens) in clipboard history | To do (concealed and password manager copies are already skipped) |
+| Sensitive content redaction | Detect and skip likely secrets (API keys, tokens) in clipboard history | Done: known key formats, private keys, credential lines and random tokens are skipped (Preferences > Clipboard) |
 | Low-resource mode | Disable thumbnails and polling on battery power | To do |
 
 ## 6. Testing strategy

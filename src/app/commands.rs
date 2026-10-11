@@ -53,6 +53,7 @@ fn entry_info(entry: &Entry) -> EntryInfo {
     EntryInfo {
         id: entry.id.to_string(),
         title: entry.title(),
+        pinned: entry.pinned,
         items: entry
             .items
             .iter()

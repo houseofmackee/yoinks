@@ -268,3 +268,67 @@ fn object<T: Message>(value: Retained<T>) -> Retained<AnyObject> {
     // SAFETY: Every Objective-C object is an `AnyObject`.
     unsafe { Retained::cast_unchecked(value) }
 }
+
+/// Clipboard items for Copy. Files and images are copied as files (images
+/// also as image data, for apps that paste pictures); text, rich text and
+/// links as their content only, so pasting gives text rather than a file.
+pub fn clipboard_items(items: &[Item]) -> Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> {
+    // SAFETY: Reading immutable framework constants.
+    let (file_url_type, url_type, png, rtf, string) = unsafe {
+        (
+            NSPasteboardTypeFileURL,
+            NSPasteboardTypeURL,
+            NSPasteboardTypePNG,
+            NSPasteboardTypeRTF,
+            NSPasteboardTypeString,
+        )
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let writer = NSPasteboardItem::new();
+            match &item.kind {
+                ItemKind::Text => {
+                    let text = std::fs::read_to_string(&item.path).ok()?;
+                    writer.setString_forType(&NSString::from_str(&text), string);
+                }
+                ItemKind::RichText => {
+                    let data = NSData::from_vec(std::fs::read(&item.path).ok()?);
+                    writer.setData_forType(&data, rtf);
+                    // SAFETY: Passing no document attributes out-parameter is allowed.
+                    let plain = unsafe {
+                        NSAttributedString::initWithRTF_documentAttributes(
+                            NSAttributedString::alloc(),
+                            &data,
+                            None,
+                        )
+                    };
+                    if let Some(plain) = plain {
+                        writer.setString_forType(&plain.string(), string);
+                    }
+                }
+                ItemKind::Url { url } => {
+                    let url = NSString::from_str(url);
+                    writer.setString_forType(&url, url_type);
+                    writer.setString_forType(&NSString::from_str(&item.title), url_name_type());
+                    writer.setString_forType(&url, string);
+                }
+                ItemKind::File | ItemKind::Image => {
+                    let file_url = NSURL::from_file_path(&item.path)?.absoluteString()?;
+                    writer.setString_forType(&file_url, file_url_type);
+                    if item.kind == ItemKind::Image
+                        && let Ok(bytes) = std::fs::read(&item.path)
+                    {
+                        let image_type = match item.path.extension().and_then(|e| e.to_str()) {
+                            Some("jpg") => jpeg_type(),
+                            _ => png,
+                        };
+                        writer.setData_forType(&NSData::from_vec(bytes), image_type);
+                    }
+                }
+                ItemKind::Pending => return None,
+            }
+            Some(ProtocolObject::from_retained(writer))
+        })
+        .collect()
+}

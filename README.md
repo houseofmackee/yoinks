@@ -26,10 +26,17 @@ Requires macOS 13 or later on Apple Silicon.
 - **Keyboard shortcut** (default ⌃⌥Y): press to show or hide the shelf, hold
   to recall the last item, press twice to add the clipboard.
 - **Quick Look and thumbnails.** Space previews the selected item; arrows,
-  Return and Delete work too.
+  Return, Delete and ⌘C work too.
+- **Quick actions.** Right-click a tile for Open With, Copy, Copy Path,
+  Rename (text, links and images Yoinks saved), Compress to zip, and
+  Convert or Resize images. Results land on the shelf as new items; the
+  originals are never changed.
+- **Pinning.** Pinned items stay on the shelf after you drag them out and
+  survive Clear Shelf.
 - **Clipboard history** from the menu bar, with search, pins, and privacy
   filters: password managers and content marked as concealed are never
-  recorded.
+  recorded, and likely passwords, API keys and tokens are skipped (this can
+  be turned off).
 - **Command line, links and Services.** `yoinks add file.pdf`,
   `yoinks://add?text=...`, and "Add to Yoinks" in the Services menu and
   Finder's Quick Actions.
@@ -63,6 +70,8 @@ of the shelf, and opening Yoinks again brings up the shelf.
 | Bring back what you dragged out | Hold ⌃⌥Y, or menu bar > Recall Last Dragged Item |
 | Preview | Select a tile and press Space |
 | Split a stack | Right-click > Unstack |
+| Keep an item after dragging it out | Right-click > Pin |
+| Copy it, rename it, zip it, convert an image | Right-click > Copy, Rename…, Compress, Convert Image |
 | Move the shelf | Drag its background (between or below the tiles) |
 | Put it back at the edge | Menu bar or gear > Move Shelf Back to Edge |
 | Clipboard history | Menu bar (or the shelf's gear) > Clipboard History… (type to search, Return copies) |

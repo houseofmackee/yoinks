@@ -213,6 +213,20 @@ define_class!(
             }
         }
 
+        // ⌘C (Edit > Copy) on the shelf copies the selected entry.
+        #[unsafe(method(copy:))]
+        fn copy(&self, _sender: Option<&AnyObject>) {
+            let copied = self
+                .ivars()
+                .selected
+                .get()
+                .zip(self.ivars().model.upgrade())
+                .is_some_and(|(id, model)| model.copy(id));
+            if !copied {
+                NSBeep();
+            }
+        }
+
         #[unsafe(method(mouseExited:))]
         fn mouse_exited(&self, _event: &NSEvent) {
             self.notify(ViewEvent::Exited);

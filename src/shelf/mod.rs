@@ -1,5 +1,6 @@
 //! The shelf: a floating panel that holds dropped items.
 
+mod actions;
 mod bookmark;
 mod describe;
 pub mod geometry;
@@ -9,6 +10,7 @@ mod menu_button;
 mod model;
 mod pasteboard;
 mod promise;
+mod prompt;
 mod recent;
 mod store;
 mod thumbnail;

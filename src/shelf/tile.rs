@@ -6,7 +6,7 @@ use std::path::Path;
 use std::rc::Weak;
 
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, ProtocolObject};
+use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSColor, NSDragOperation, NSDraggingContext, NSDraggingItem, NSDraggingSession,
@@ -15,13 +15,16 @@ use objc2_app_kit::{
     NSUserInterfaceLayoutOrientation, NSView, NSWorkspace,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSArray, NSObject, NSObjectProtocol, NSPoint, NSRect, NSString, ns_string,
+    MainThreadMarker, NSArray, NSFileManager, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize,
+    NSString, NSURL, ns_string,
 };
 use uuid::Uuid;
 
+use super::actions::{self, ImageFormat, RESIZE_SIZES};
 use super::item::{Entry, ItemKind};
 use super::model::ShelfModel;
 use super::pasteboard;
+use super::prompt::RenamePrompt;
 use crate::ui::menu_item;
 
 pub const TILE_WIDTH: f64 = 96.0;
@@ -31,6 +34,7 @@ const BADGE_SIZE: f64 = 18.0;
 pub struct TileIvars {
     entry_id: Uuid,
     is_stack: bool,
+    pinned: bool,
     model: Weak<ShelfModel>,
     icon: OnceCell<Retained<NSImageView>>,
     /// Set while the mouse is down and a drag was attempted, so one press
@@ -113,6 +117,78 @@ define_class!(
             self.with_model(|model, id| model.unstack(id));
         }
 
+        #[unsafe(method(copyItem:))]
+        fn copy_item(&self, _sender: Option<&AnyObject>) {
+            self.with_model(|model, id| {
+                if !model.copy(id) {
+                    objc2_app_kit::NSBeep();
+                }
+            });
+        }
+
+        #[unsafe(method(copyItemPath:))]
+        fn copy_item_path(&self, _sender: Option<&AnyObject>) {
+            self.with_model(|model, id| {
+                model.copy_paths(id);
+            });
+        }
+
+        #[unsafe(method(openItemWith:))]
+        fn open_item_with(&self, sender: Option<&NSMenuItem>) {
+            let app = sender
+                .and_then(|item| item.representedObject())
+                .and_then(|object| object.downcast::<NSURL>().ok());
+            if let Some(app) = app {
+                self.with_model(|model, id| model.open_with(id, &app));
+            }
+        }
+
+        #[unsafe(method(renameItem:))]
+        fn rename_item(&self, _sender: Option<&AnyObject>) {
+            let Some(model) = self.ivars().model.upgrade() else { return };
+            let id = self.ivars().entry_id;
+            let Some(current) = model.renamable_name(id) else { return };
+            let weak = self.ivars().model.clone();
+            RenamePrompt::show(self.mtm(), self, &current, move |name| match weak.upgrade() {
+                Some(model) => model.rename(id, name),
+                None => Ok(()),
+            });
+        }
+
+        #[unsafe(method(compressItem:))]
+        fn compress_item(&self, _sender: Option<&AnyObject>) {
+            self.with_model(|model, id| {
+                let paths = model.item_paths(id);
+                model.run_job(self.mtm(), move |out| actions::compress(&paths, out));
+            });
+        }
+
+        #[unsafe(method(convertImage:))]
+        fn convert_image(&self, sender: Option<&NSMenuItem>) {
+            let Some(index) = sender.map(|item| item.tag()) else { return };
+            let Some(format) = usize::try_from(index).ok().and_then(|i| ImageFormat::ALL.get(i).copied()) else {
+                return;
+            };
+            self.with_model(|model, id| {
+                let images = model.image_paths(id);
+                model.run_job(self.mtm(), move |out| actions::convert(&images, format, out));
+            });
+        }
+
+        #[unsafe(method(resizeImage:))]
+        fn resize_image(&self, sender: Option<&NSMenuItem>) {
+            let Some(max) = sender.and_then(|item| u32::try_from(item.tag()).ok()) else { return };
+            self.with_model(|model, id| {
+                let images = model.image_paths(id);
+                model.run_job(self.mtm(), move |out| actions::resize(&images, max, out));
+            });
+        }
+
+        #[unsafe(method(togglePinItem:))]
+        fn toggle_pin_item(&self, _sender: Option<&AnyObject>) {
+            self.with_model(|model, id| model.toggle_pin(id));
+        }
+
         #[unsafe(method(removeItem:))]
         fn remove_item(&self, _sender: Option<&AnyObject>) {
             self.with_model(|model, id| model.view().remove(id));
@@ -178,6 +254,7 @@ impl TileView {
         let this = Self::alloc(mtm).set_ivars(TileIvars {
             entry_id: entry.id,
             is_stack: entry.is_stack(),
+            pinned: entry.pinned,
             model,
             icon: OnceCell::new(),
             dragging: Cell::new(false),
@@ -246,6 +323,9 @@ impl TileView {
         if entry.is_stack() {
             this.add_badge(&image_view, entry.items.len());
         }
+        if entry.pinned {
+            this.add_pin(&image_view);
+        }
         this.setToolTip(Some(&NSString::from_str(tooltip)));
         this
     }
@@ -270,6 +350,30 @@ impl TileView {
         let window = self.window()?;
         let in_window = icon.convertRect_toView(icon.bounds(), None);
         Some(window.convertRectToScreen(in_window))
+    }
+
+    /// A pin, top left of the icon, on pinned entries.
+    fn add_pin(&self, icon: &NSImageView) {
+        let mtm = self.mtm();
+        let Some(symbol) = NSImage::imageWithSystemSymbolName_accessibilityDescription(
+            ns_string!("pin.circle.fill"),
+            Some(ns_string!("Pinned")),
+        ) else {
+            return;
+        };
+        let pin = NSImageView::imageViewWithImage(&symbol, mtm);
+        pin.setContentTintColor(Some(&NSColor::systemOrangeColor()));
+        pin.unregisterDraggedTypes();
+        pin.setTranslatesAutoresizingMaskIntoConstraints(false);
+        self.addSubview(&pin);
+        NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[
+            pin.widthAnchor().constraintEqualToConstant(BADGE_SIZE),
+            pin.heightAnchor().constraintEqualToConstant(BADGE_SIZE),
+            pin.centerXAnchor()
+                .constraintEqualToAnchor_constant(&icon.leadingAnchor(), 2.0),
+            pin.centerYAnchor()
+                .constraintEqualToAnchor_constant(&icon.topAnchor(), 4.0),
+        ]));
     }
 
     /// The item count, top right of the icon.
@@ -352,24 +456,119 @@ impl TileView {
         let menu = NSMenu::new(mtm);
         menu.setAutoenablesItems(false);
         let target = Some::<&AnyObject>(self);
-        let quick_look = menu_item(mtm, "Quick Look", sel!(quickLookItem:), " ", target);
+        let item = |title: &str, action: Sel, key: &str| menu_item(mtm, title, action, key, target);
+        let model = self.ivars().model.upgrade();
+        let id = self.ivars().entry_id;
+
+        let quick_look = item("Quick Look", sel!(quickLookItem:), " ");
         quick_look.setKeyEquivalentModifierMask(objc2_app_kit::NSEventModifierFlags::empty());
         menu.addItem(&quick_look);
-        menu.addItem(&menu_item(mtm, "Open", sel!(openItem:), "", target));
-        menu.addItem(&menu_item(
-            mtm,
-            "Reveal in Finder",
-            sel!(revealItem:),
-            "",
-            target,
-        ));
-        if self.ivars().is_stack {
-            menu.addItem(&menu_item(mtm, "Unstack", sel!(unstackItem:), "", target));
+        menu.addItem(&item("Open", sel!(openItem:), ""));
+        if let Some(open_with) = model
+            .as_ref()
+            .and_then(|m| self.open_with_menu(&m.open_urls(id)))
+        {
+            menu.addItem(&submenu_item(mtm, "Open With", &open_with));
+        }
+        menu.addItem(&item("Reveal in Finder", sel!(revealItem:), ""));
+        menu.addItem(&NSMenuItem::separatorItem(mtm));
+
+        menu.addItem(&item("Copy", sel!(copyItem:), "c"));
+        menu.addItem(&item("Copy Path", sel!(copyItemPath:), ""));
+        menu.addItem(&NSMenuItem::separatorItem(mtm));
+
+        if model
+            .as_ref()
+            .is_some_and(|m| m.renamable_name(id).is_some())
+        {
+            menu.addItem(&item("Rename…", sel!(renameItem:), ""));
+        }
+        menu.addItem(&item("Compress", sel!(compressItem:), ""));
+        if model
+            .as_ref()
+            .is_some_and(|m| !m.image_paths(id).is_empty())
+        {
+            let convert = NSMenu::new(mtm);
+            for (index, format) in ImageFormat::ALL.iter().enumerate() {
+                let choice = item(format.label(), sel!(convertImage:), "");
+                choice.setTag(index as isize);
+                convert.addItem(&choice);
+            }
+            menu.addItem(&submenu_item(mtm, "Convert Image", &convert));
+
+            let resize = NSMenu::new(mtm);
+            for max in RESIZE_SIZES {
+                let choice = item(&format!("{max} px"), sel!(resizeImage:), "");
+                choice.setTag(max as isize);
+                resize.addItem(&choice);
+            }
+            menu.addItem(&submenu_item(mtm, "Resize Image", &resize));
         }
         menu.addItem(&NSMenuItem::separatorItem(mtm));
-        menu.addItem(&menu_item(mtm, "Remove", sel!(removeItem:), "", target));
+
+        let pin_title = if self.ivars().pinned { "Unpin" } else { "Pin" };
+        menu.addItem(&item(pin_title, sel!(togglePinItem:), ""));
+        if self.ivars().is_stack {
+            menu.addItem(&item("Unstack", sel!(unstackItem:), ""));
+        }
+        menu.addItem(&NSMenuItem::separatorItem(mtm));
+        menu.addItem(&item("Remove", sel!(removeItem:), ""));
         menu
     }
+
+    /// Apps that can open the first item, the default one first.
+    fn open_with_menu(&self, urls: &[Retained<NSURL>]) -> Option<Retained<NSMenu>> {
+        let mtm = self.mtm();
+        let url = urls.first()?;
+        let workspace = NSWorkspace::sharedWorkspace();
+        let default = workspace.URLForApplicationToOpenURL(url);
+        let mut apps: Vec<Retained<NSURL>> = workspace.URLsForApplicationsToOpenURL(url).to_vec();
+        if apps.is_empty() {
+            return None;
+        }
+        let name = |app: &NSURL| {
+            app.path()
+                .map(|path| {
+                    NSFileManager::defaultManager()
+                        .displayNameAtPath(&path)
+                        .to_string()
+                })
+                .unwrap_or_default()
+        };
+        apps.sort_by_key(|app| name(app).to_lowercase());
+        if let Some(default) = &default {
+            apps.retain(|app| app.path() != default.path());
+            apps.insert(0, default.clone());
+        }
+        let menu = NSMenu::new(mtm);
+        for (index, app) in apps.iter().enumerate() {
+            let mut title = name(app);
+            if index == 0 && default.is_some() {
+                title.push_str(" (default)");
+            }
+            let entry = menu_item(mtm, &title, sel!(openItemWith:), "", Some(self.as_ref()));
+            if let Some(path) = app.path() {
+                let icon = workspace.iconForFile(&path);
+                icon.setSize(NSSize::new(16.0, 16.0));
+                entry.setImage(Some(&icon));
+            }
+            // SAFETY: An NSURL is a valid represented object.
+            unsafe { entry.setRepresentedObject(Some(app)) };
+            menu.addItem(&entry);
+            if index == 0 && default.is_some() && apps.len() > 1 {
+                menu.addItem(&NSMenuItem::separatorItem(mtm));
+            }
+        }
+        Some(menu)
+    }
+}
+
+/// A menu item that opens `submenu`.
+fn submenu_item(mtm: MainThreadMarker, title: &str, submenu: &NSMenu) -> Retained<NSMenuItem> {
+    let item = NSMenuItem::new(mtm);
+    item.setTitle(&NSString::from_str(title));
+    item.setSubmenu(Some(submenu));
+    item
 }
 
 /// A Quick Look thumbnail when available; otherwise images show themselves,

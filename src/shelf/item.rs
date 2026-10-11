@@ -16,6 +16,10 @@ pub struct Entry {
     /// open for syncing shelves between Macs later.
     pub added_at: u64,
     pub modified_at: u64,
+    /// Pinned entries stay on the shelf after being dragged out and are left
+    /// alone by Clear Shelf.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
     pub items: Vec<Item>,
 }
 
@@ -26,6 +30,7 @@ impl Entry {
             id: Uuid::new_v4(),
             added_at: now,
             modified_at: now,
+            pinned: false,
             items,
         }
     }

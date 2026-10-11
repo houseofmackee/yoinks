@@ -40,3 +40,40 @@ pub fn activate_app(mtm: MainThreadMarker) {
         app.activateIgnoringOtherApps(true);
     }
 }
+
+/// A main menu with just an Edit menu. Yoinks never shows a menu bar, but
+/// text fields get Cut, Copy, Paste, Select All and Undo from the main
+/// menu's key equivalents (⌘X, ⌘C, ⌘V, ⌘A, ⌘Z); without it those keys do
+/// nothing in the history search, Preferences and the rename prompt.
+pub fn install_edit_menu(mtm: MainThreadMarker) {
+    use objc2::sel;
+    use objc2_app_kit::{NSEventModifierFlags, NSMenu};
+
+    let edit = NSMenu::new(mtm);
+    edit.setTitle(&NSString::from_str("Edit"));
+    let entries = [
+        ("Undo", sel!(undo:), "z", false),
+        ("Redo", sel!(redo:), "z", true),
+        ("Cut", sel!(cut:), "x", false),
+        ("Copy", sel!(copy:), "c", false),
+        ("Paste", sel!(paste:), "v", false),
+        ("Select All", sel!(selectAll:), "a", false),
+    ];
+    for (title, action, key, shift) in entries {
+        // No target: each goes to the first responder (the focused field).
+        let item = menu_item(mtm, title, action, key, None);
+        if shift {
+            item.setKeyEquivalentModifierMask(
+                NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
+            );
+        }
+        edit.addItem(&item);
+    }
+    let edit_item = NSMenuItem::new(mtm);
+    edit_item.setSubmenu(Some(&edit));
+    let main = NSMenu::new(mtm);
+    // The first item is the (invisible) application menu.
+    main.addItem(&NSMenuItem::new(mtm));
+    main.addItem(&edit_item);
+    objc2_app_kit::NSApplication::sharedApplication(mtm).setMainMenu(Some(&main));
+}

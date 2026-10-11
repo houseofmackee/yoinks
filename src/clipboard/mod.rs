@@ -4,6 +4,7 @@
 mod filters;
 mod history;
 mod panel;
+mod secrets;
 mod watcher;
 
 pub use panel::HistoryList;

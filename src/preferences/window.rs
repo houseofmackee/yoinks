@@ -145,6 +145,12 @@ define_class!(
             self.update(|s| s.clipboard_history = enabled);
         }
 
+        #[unsafe(method(skipSecretsChanged:))]
+        fn skip_secrets_changed(&self, sender: &NSButton) {
+            let skip = sender.state() == NSControlStateValueOn;
+            self.update(|s| s.clipboard_skip_secrets = skip);
+        }
+
         #[unsafe(method(clipboardSizeChanged:))]
         fn clipboard_size_changed(&self, sender: &NSPopUpButton) {
             let size = sender
@@ -615,6 +621,24 @@ impl PreferencesWindow {
         } else {
             NSControlStateValueOff
         });
+        let skip_secrets = form::checkbox(
+            mtm,
+            "Skip passwords, API keys and tokens",
+            target,
+            sel!(skipSecretsChanged:),
+        );
+        skip_secrets.setState(if settings.clipboard_skip_secrets {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
+        let skip_note = note(
+            mtm,
+            "Copies that look like a key or token (GitHub, AWS, Stripe, OpenAI and \
+             others), a private key, a KEY=value line with a password or token, or a \
+             long random string are not recorded.",
+            NOTE_WIDTH,
+        );
         let mut sizes: Vec<usize> = HISTORY_SIZES.to_vec();
         if !sizes.contains(&settings.clipboard_history_size) {
             sizes.push(settings.clipboard_history_size);
@@ -645,6 +669,8 @@ impl PreferencesWindow {
 
         let rows: Vec<Retained<NSView>> = vec![
             up(&*row(mtm, "Clipboard:", &enabled)),
+            up(&*indented(mtm, &skip_secrets)),
+            up(&*indented(mtm, &skip_note)),
             up(&*row(mtm, "Remember:", &size)),
             up(&*row(mtm, "Never record copies from:", &apps_view)),
             up(&*indented(

@@ -21,6 +21,7 @@ use uuid::Uuid;
 
 use super::filters;
 use super::history::{Clip, ClipContent, History, Source};
+use super::secrets::looks_like_secret;
 use crate::settings::Settings;
 use crate::shelf::{Content, Dropped, read_pasteboard};
 
@@ -36,6 +37,8 @@ pub struct ClipboardHistory {
     ignored_apps: RefCell<Vec<String>>,
     /// The `clipboard_history` setting; when off nothing is recorded.
     enabled: Cell<bool>,
+    /// The `clipboard_skip_secrets` setting.
+    skip_secrets: Cell<bool>,
     paused: Cell<bool>,
     /// The general pasteboard's change count last seen (or set by us).
     last_change: Cell<isize>,
@@ -61,6 +64,7 @@ impl ClipboardHistory {
             clips_dir,
             ignored_apps: RefCell::new(settings.clipboard_ignored_apps.clone()),
             enabled: Cell::new(settings.clipboard_history),
+            skip_secrets: Cell::new(settings.clipboard_skip_secrets),
             paused: Cell::new(false),
             last_change: Cell::new(NSPasteboard::generalPasteboard().changeCount()),
             on_change: RefCell::new(None),
@@ -94,6 +98,7 @@ impl ClipboardHistory {
                 .set(NSPasteboard::generalPasteboard().changeCount());
         }
         self.enabled.set(settings.clipboard_history);
+        self.skip_secrets.set(settings.clipboard_skip_secrets);
         *self.ignored_apps.borrow_mut() = settings.clipboard_ignored_apps.clone();
         let removed = self
             .history
@@ -215,8 +220,13 @@ impl ClipboardHistory {
         if !filters::should_record(&types, source_id, &self.ignored_apps.borrow()) {
             return;
         }
+        let dropped = read_pasteboard(pasteboard);
+        // Checked before anything is written to disk.
+        if self.skip_secrets.get() && contains_secret(&dropped) {
+            return;
+        }
         let id = Uuid::new_v4();
-        let Some(content) = self.content(id, read_pasteboard(pasteboard)) else {
+        let Some(content) = self.content(id, dropped) else {
             return;
         };
         let clip = Clip {
@@ -278,6 +288,15 @@ impl ClipboardHistory {
             on_change();
         }
     }
+}
+
+/// True if any text, rich text or link in the copy looks like a secret.
+fn contains_secret(dropped: &Dropped) -> bool {
+    dropped.contents.iter().any(|content| match content {
+        Content::Text(text) | Content::RichText { plain: text, .. } => looks_like_secret(text),
+        Content::Url { url, .. } => looks_like_secret(url),
+        Content::Image { .. } => false,
+    })
 }
 
 /// Deletes payload files no clip refers to.

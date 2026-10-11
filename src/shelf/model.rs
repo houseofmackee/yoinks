@@ -6,6 +6,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 use std::rc::{Rc, Weak};
+use std::sync::Arc;
+
+use dispatch2::{DispatchQueue, MainThreadBound};
 
 use block2::RcBlock;
 use objc2::AnyThread;
@@ -17,6 +20,7 @@ use objc2_foundation::{
 use objc2_uniform_type_identifiers::UTType;
 use uuid::Uuid;
 
+use super::actions;
 use super::bookmark;
 use super::describe::{self, FileFacts};
 use super::item::{Entry, Item, ItemKind, file_name};
@@ -125,7 +129,12 @@ impl ShelfModel {
     /// Entry `id` was dropped somewhere that accepted it. It leaves the shelf
     /// and can be recalled, unless the shelf keeps dragged-out items.
     pub fn dragged_out(&self, id: Uuid) {
-        if self.keep_after_drag_out.get() {
+        let pinned = self
+            .store
+            .borrow()
+            .entry(id)
+            .is_some_and(|entry| entry.pinned);
+        if self.keep_after_drag_out.get() || pinned {
             // Finder may have moved the files; follow them so the tile keeps
             // working.
             let mut store = self.store.borrow_mut();
@@ -147,6 +156,207 @@ impl ShelfModel {
             }
         }
         self.reload();
+    }
+
+    pub fn is_pinned(&self, id: Uuid) -> bool {
+        self.store
+            .borrow()
+            .entry(id)
+            .is_some_and(|entry| entry.pinned)
+    }
+
+    pub fn toggle_pin(&self, id: Uuid) {
+        let pinned = self.is_pinned(id);
+        if self.store.borrow_mut().set_pinned(id, !pinned) {
+            self.reload();
+        }
+    }
+
+    /// True if Clear Shelf would remove anything.
+    pub fn has_unpinned(&self) -> bool {
+        self.store.borrow().has_unpinned()
+    }
+
+    /// Puts an entry's items on the clipboard: files as files, text as text,
+    /// links as links, images as images.
+    pub fn copy(&self, id: Uuid) -> bool {
+        let items = self.ready_items(id);
+        let writers = pasteboard::clipboard_items(&items);
+        if writers.is_empty() {
+            return false;
+        }
+        let general = NSPasteboard::generalPasteboard();
+        general.clearContents();
+        general.writeObjects(&NSArray::from_retained_slice(&writers))
+    }
+
+    /// Puts the items' paths (links: their URLs) on the clipboard as text,
+    /// one per line.
+    pub fn copy_paths(&self, id: Uuid) -> bool {
+        let lines: Vec<String> = self
+            .ready_items(id)
+            .iter()
+            .map(|item| match &item.kind {
+                ItemKind::Url { url } => url.clone(),
+                _ => item.path.display().to_string(),
+            })
+            .collect();
+        if lines.is_empty() {
+            return false;
+        }
+        let general = NSPasteboard::generalPasteboard();
+        general.clearContents();
+        // SAFETY: Reading an immutable framework constant.
+        general.setString_forType(&NSString::from_str(&lines.join("\n")), unsafe {
+            objc2_app_kit::NSPasteboardTypeString
+        })
+    }
+
+    /// URLs to hand to other apps (links as web links).
+    pub fn open_urls(&self, id: Uuid) -> Vec<Retained<NSURL>> {
+        self.urls(id, true)
+    }
+
+    /// Opens the entry's items with the app at `app`.
+    pub fn open_with(&self, id: Uuid, app: &NSURL) {
+        let urls = self.urls(id, true);
+        if urls.is_empty() {
+            return;
+        }
+        let configuration = objc2_app_kit::NSWorkspaceOpenConfiguration::configuration();
+        NSWorkspace::sharedWorkspace()
+            .openURLs_withApplicationAtURL_configuration_completionHandler(
+                &NSArray::from_retained_slice(&urls),
+                app,
+                &configuration,
+                None,
+            );
+    }
+
+    /// The current file name, if the entry is a single item Yoinks owns
+    /// (text, links, images and attachments it saved). User files are never
+    /// renamed.
+    pub fn renamable_name(&self, id: Uuid) -> Option<String> {
+        let store = self.store.borrow();
+        match store.entry(id)?.items.as_slice() {
+            [item] if item.owned && item.kind != ItemKind::Pending => Some(file_name(&item.path)),
+            _ => None,
+        }
+    }
+
+    /// Renames an owned item's file, which is the name it gets when dragged
+    /// out.
+    pub fn rename(&self, id: Uuid, name: &str) -> Result<(), String> {
+        let name = actions::validate_name(name)?;
+        let Some(old) = self.renamable_name(id).and_then(|_| {
+            self.store
+                .borrow()
+                .entry(id)
+                .map(|entry| entry.items[0].path.clone())
+        }) else {
+            return Err("Only items Yoinks saved can be renamed".to_owned());
+        };
+        let new = actions::renamed_path(&old, &name);
+        if new == old {
+            return Ok(());
+        }
+        if new.exists() {
+            return Err(format!("\"{}\" already exists", file_name(&new)));
+        }
+        fs::rename(&old, &new).map_err(|error| error.to_string())?;
+        self.store.borrow_mut().update(id, |entry| {
+            let item = &mut entry.items[0];
+            item.title = match item.kind {
+                ItemKind::File | ItemKind::Image => file_name(&new),
+                _ => new
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| file_name(&new)),
+            };
+            item.path = new.clone();
+            item.bookmark = bookmark::create(&new);
+        });
+        self.thumbnails
+            .remove(self.store.borrow().entry(id).map_or(id, |e| e.items[0].id));
+        self.reload();
+        Ok(())
+    }
+
+    /// Paths of the entry's items that are images.
+    pub fn image_paths(&self, id: Uuid) -> Vec<PathBuf> {
+        self.ready_items(id)
+            .into_iter()
+            .filter(is_image)
+            .map(|item| item.path)
+            .collect()
+    }
+
+    /// Paths of the entry's items (for Compress).
+    pub fn item_paths(&self, id: Uuid) -> Vec<PathBuf> {
+        self.ready_items(id)
+            .into_iter()
+            .map(|item| item.path)
+            .collect()
+    }
+
+    /// Runs `job` on a background thread with a fresh folder to write into;
+    /// the files it returns become a new entry (a stack if several). Beeps
+    /// if it fails.
+    pub fn run_job(
+        &self,
+        mtm: MainThreadMarker,
+        job: impl FnOnce(&Path) -> std::io::Result<Vec<PathBuf>> + Send + 'static,
+    ) {
+        let Ok(out_dir) = self.items_dir.incoming_dir() else {
+            objc2_app_kit::NSBeep();
+            return;
+        };
+        let model = Arc::new(MainThreadBound::new(self.this.clone(), mtm));
+        std::thread::spawn(move || {
+            let result = job(&out_dir);
+            DispatchQueue::main().exec_async(move || {
+                let mtm = MainThreadMarker::new().expect("main queue runs on the main thread");
+                if let Some(model) = model.get(mtm).upgrade() {
+                    model.job_finished(&out_dir, result);
+                }
+            });
+        });
+    }
+
+    fn job_finished(&self, out_dir: &Path, result: std::io::Result<Vec<PathBuf>>) {
+        let items: Vec<Item> = match result {
+            Ok(paths) => paths
+                .iter()
+                .filter_map(|path| {
+                    self.items_dir
+                        .adopt(path)
+                        .inspect_err(|error| {
+                            eprintln!("yoinks: could not keep {}: {error}", path.display())
+                        })
+                        .ok()
+                })
+                .collect(),
+            Err(error) => {
+                eprintln!("yoinks: action failed: {error}");
+                Vec::new()
+            }
+        };
+        let _ = fs::remove_dir_all(out_dir);
+        if items.is_empty() {
+            objc2_app_kit::NSBeep();
+            return;
+        }
+        self.store.borrow_mut().insert(Entry::new(items));
+        self.reload();
+    }
+
+    /// The entry's items, unless it is still receiving files.
+    fn ready_items(&self, id: Uuid) -> Vec<Item> {
+        let store = self.store.borrow();
+        match store.entry(id) {
+            Some(entry) if !entry.has_pending() => entry.items.clone(),
+            _ => Vec::new(),
+        }
     }
 
     /// Adds whatever is on the clipboard (files, text, links, images) to the
@@ -445,4 +655,21 @@ fn file_facts(item: &Item) -> FileFacts {
         kind,
         excerpt,
     }
+}
+
+/// Images by kind or by file type (a dropped photo is a `File`).
+fn is_image(item: &Item) -> bool {
+    if item.kind == ItemKind::Image {
+        return true;
+    }
+    if item.kind != ItemKind::File {
+        return false;
+    }
+    let Some(ext) = item.path.extension() else {
+        return false;
+    };
+    // SAFETY: Reading an immutable framework constant.
+    let image = unsafe { objc2_uniform_type_identifiers::UTTypeImage };
+    UTType::typeWithFilenameExtension(&NSString::from_str(&ext.to_string_lossy()))
+        .is_some_and(|uti| uti.conformsToType(image))
 }
