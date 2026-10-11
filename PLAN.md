@@ -313,6 +313,11 @@ Key design points:
 - [x] GitHub Actions (`.github/workflows/ci.yml`, Apple Silicon runner):
   `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, disk image
   uploaded as an artifact. Not run yet: the repository has no remote.
+- [x] Later (2026-10-11), aligned with CleanShotZ: CI runs on master and pull
+  requests (clippy also in release, a release bundle build, `cargo deny`),
+  and `.github/workflows/release.yml` builds, signs with the self-signed
+  "Yoinks Release" certificate and publishes when a `v*` tag is pushed.
+  Developer ID signing and notarization are still to do.
 - [x] README with install, usage, command line, settings and build steps.
 - To do, needs a Developer ID: hardened runtime, Developer ID signing,
   notarization with `notarytool` and stapling, then signing in CI with

@@ -24,9 +24,28 @@ cp "target/$profile/yoinks" "$app/Contents/MacOS/yoinks"
 cp macos/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 sed "s/@VERSION@/$version/g" macos/Info.plist > "$app/Contents/Info.plist"
 
-# Ad-hoc signature for local use. Distribution builds are signed with a
-# Developer ID and notarized (see PLAN.md, Phase 10).
-codesign --force --sign - "$app"
+# Debug builds are signed ad hoc. Release builds are signed with the
+# self-signed "Yoinks Release" certificate when it is in the keychain (as it
+# is in the release workflow), so macOS keeps permissions across updates;
+# ad-hoc signatures change with every build. SIGN_IDENTITY overrides this
+# ("-" for ad hoc).
+release_identity="Yoinks Release"
+if [ -z "${SIGN_IDENTITY:-}" ]; then
+    SIGN_IDENTITY=-
+    if [ "$profile" = release ]; then
+        if security find-identity -p codesigning | grep -q "\"$release_identity\""; then
+            SIGN_IDENTITY=$release_identity
+        else
+            echo "warning: \"$release_identity\" is not in the keychain; signing ad hoc" >&2
+        fi
+    fi
+fi
+if [ "$profile" = release ]; then
+    codesign --force --options runtime --timestamp=none --sign "$SIGN_IDENTITY" "$app"
+else
+    codesign --force --sign "$SIGN_IDENTITY" "$app"
+fi
+codesign --verify --strict "$app"
 
 # Register with Launch Services so yoinks:// and the service work right away
 # (skipped on CI with YOINKS_SKIP_REGISTER=1).

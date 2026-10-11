@@ -43,7 +43,8 @@ Requires macOS 13 or later on Apple Silicon.
    [0.1.2](https://github.com/houseofmackee/yoinks/releases/tag/v0.1.2)), open
    it and drag Yoinks into Applications. To build it yourself, see
    [Building](#building).
-2. Builds are not signed or notarized yet, so macOS blocks the first launch.
+2. Releases are signed with the project's self-signed "Yoinks Release"
+   certificate but not notarized, so macOS blocks the first launch.
    Open Yoinks once, then go to System Settings > Privacy & Security and
    choose **Open Anyway**.
 
@@ -117,11 +118,34 @@ cargo test                     # unit tests
 scripts/bundle.sh              # target/debug/Yoinks.app
 scripts/bundle.sh release      # target/release/Yoinks.app
 scripts/make-dmg.sh            # target/release/Yoinks-<version>.dmg
+scripts/dist.sh                # target/dist: DMG, zip and SHA256SUMS.txt
 swift scripts/make-icon.swift  # regenerate macos/AppIcon.icns
 ```
 
-`bundle.sh` signs the app ad hoc and registers it with Launch Services so the
-link scheme and the service work during development.
+`bundle.sh` registers the app with Launch Services so the link scheme and the
+service work during development (set `YOINKS_SKIP_REGISTER=1` to skip). Debug
+builds are signed ad hoc; release builds use the "Yoinks Release" certificate
+if it is in the keychain, otherwise ad hoc (`SIGN_IDENTITY` overrides).
+
+GitHub Actions runs `cargo fmt --check`, `cargo clippy -D warnings` (debug and
+release), `cargo test`, a release bundle build and `cargo deny check` (see
+`deny.toml`) on every push to master and every pull request.
+
+### Releasing
+
+Releases are built and published by GitHub Actions, not from a local machine.
+Bump the version in `Cargo.toml`, commit, then push a matching tag:
+
+```sh
+git tag v0.2.0 && git push origin master v0.2.0
+```
+
+`.github/workflows/release.yml` checks the tag matches `Cargo.toml`, signs
+with the "Yoinks Release" certificate from the repository secrets
+`RELEASE_CERT_P12_BASE64` and `RELEASE_CERT_PASSWORD` (made once with
+`scripts/create-release-cert.sh`), runs `scripts/dist.sh` and publishes the
+DMG, zip and `SHA256SUMS.txt`. Tags with a hyphen (`v0.2.0-beta.1`) become
+pre-releases. Do not create releases by hand with `gh release create`.
 
 ## Status
 

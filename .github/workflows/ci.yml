@@ -2,37 +2,34 @@ name: CI
 
 on:
   push:
+    branches: [master, main]
   pull_request:
 
-jobs:
-  build:
-    # Apple Silicon runner; Yoinks supports Apple Silicon only.
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
+env:
+  CARGO_TERM_COLOR: always
 
+jobs:
+  check:
+    # Apple Silicon runner; Yoinks supports Apple Silicon only.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
-
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-
-      - name: Format
-        run: cargo fmt --check
-
-      - name: Lint
-        run: cargo clippy --all-targets -- -D warnings
-
-      - name: Test
-        run: cargo test
-
-      - name: Disk image
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # Debug-only code paths can leave release builds with dead code.
+      - run: cargo clippy --workspace --all-targets --release -- -D warnings
+      - run: cargo test --workspace
+      - run: scripts/bundle.sh release
         env:
+          SIGN_IDENTITY: "-"
           YOINKS_SKIP_REGISTER: "1"
-        run: scripts/make-dmg.sh
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Yoinks-dmg
-          path: target/release/Yoinks-*.dmg
-          if-no-files-found: error
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: EmbarkStudios/cargo-deny-action@v2
