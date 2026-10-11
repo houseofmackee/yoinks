@@ -416,7 +416,13 @@ impl PreferencesWindow {
         };
         // SAFETY: We hold a strong reference to the window.
         unsafe { window.setReleasedWhenClosed(false) };
-        window.setTitle(ns_string!("Yoinks Preferences"));
+        // The version this build was made from (Cargo.toml). In the title
+        // rather than a subtitle, which macOS joins with a dash.
+        window.setTitle(ns_string!(concat!(
+            "Yoinks Preferences (Version ",
+            env!("CARGO_PKG_VERSION"),
+            ")"
+        )));
         window.setHidesOnDeactivate(false);
         window.setContentView(Some(&tabs));
         window.setContentSize(NSSize::new(WIDTH, height));
