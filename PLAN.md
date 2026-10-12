@@ -306,6 +306,9 @@ Key design points:
 - Decision (2026-10-10): skipped for now. Revisit once a signing team is
   available; without one, only the Share extension and Shortcuts actions
   could be tried, ad hoc and on one Mac.
+- Update (2026-10-12): the Developer ID team (ZD5VPNGP3T) is now set up,
+  so this is unblocked. An App Group for the widget still needs to be
+  registered with that team.
 
 ### Phase 10: Packaging and distribution (done)
 - [x] Apple Silicon only (decision 2026-10-10): no universal binary.
@@ -324,8 +327,9 @@ Key design points:
   and `.github/workflows/release.yml` builds, signs with the self-signed
   "Yoinks Release" certificate (hardened runtime) and publishes the DMG,
   zip and `SHA256SUMS.txt` when a `v*` tag is pushed; hyphenated tags
-  become pre-releases. First used for v0.1.3-beta.1. The certificate is in
-  the login keychain and the repository secrets.
+  become pre-releases. First used for v0.1.3-beta.1. The certificate stays
+  in the login keychain as the local fallback; its repository secrets were
+  deleted once releases moved to the Developer ID.
 - [x] README with install, usage, command line, settings and build steps.
 - [x] Developer ID signing and notarization (2026-10-12), set up like
   CleanShotZ with the same team's certificate and App Store Connect key:
@@ -333,7 +337,13 @@ Key design points:
   and `dist.sh` notarizes the app with `notarytool`, staples it, then signs,
   notarizes and staples the DMG. The release workflow imports the
   certificate (plus Apple's G2 intermediate) and refuses to publish a DMG
-  that fails `stapler validate`. No more "Open Anyway" step.
+  that fails `stapler validate`. No more "Open Anyway" step. Stapling and
+  validating are retried up to five times, because the CI runner's
+  connection to Apple's ticket server dropped twice on the first v0.3.0
+  run.
+- [x] v0.3.0 (2026-10-12): the first full release that is Developer ID
+  signed, notarized and carries Sparkle, with its `appcast.xml` as the
+  update feed. Installed in /Applications from the release DMG.
 - [x] Automatic updates with Sparkle 2.10 (2026-10-12), as in CleanShotZ:
   `scripts/sparkle.sh` downloads it at a pinned checksum, `bundle.sh`
   embeds it in release builds (no XPC services) with the feed URL and
@@ -347,8 +357,8 @@ Key design points:
   hyphen and dot (`0.2.0beta2`) because Sparkle treats `0.2.0-beta.1`,
   `0.2.0-beta.2` and `0.2.0` as equal. Tested end to end with a local
   feed: offered, downloaded, verified, replaced and relaunched.
-- Swift add-ons (Phase 9b) would be built and embedded here once signing
-  exists.
+- Swift add-ons (Phase 9b) would be built and embedded here; signing now
+  exists (see section 9).
 
 ### Additions requested after Phase 10 (done)
 - [x] Hide the menu bar icon: `show_menu_bar_icon` setting and a
@@ -417,7 +427,7 @@ Key design points:
 | M3: Clipboard + settings | 7, 8 | Clipboard history and a full preferences window |
 | M4: Integrations | 9a (9b deferred) | CLI, URL scheme, Services, Continuity Camera |
 | M5: Ship | 10 | Releases built, signed with a Developer ID, notarized and published by GitHub Actions, with Sparkle updates |
-| M6: Beyond Yoink | Section 5 | Selected improvements, prioritized after M5 |
+| M6: Beyond Yoink | Section 5 | In progress: pinning, quick actions, OCR, secret skipping, screenshots, auto-expiry and the keyboard workflow shipped in 0.2.0 to 0.3.0; see section 9 for the rest |
 
 ## 8. Decisions and future options
 
@@ -431,3 +441,42 @@ Key design points:
   UUID and a modification timestamp, and by keeping `ShelfStore` persistence
   behind a trait so a sync backend (iCloud via CloudKit, or a shared folder)
   can be added later without reworking the model.
+
+## 9. What's left (as of v0.3.0, 2026-10-12)
+
+**Features (section 5)**
+- Shelf search and filter: type to narrow the shelf by name, kind or
+  content, like clipboard history already does.
+- Multiple named shelves, each persisted separately, with a switcher.
+- Text snippet editing: edit a text clipping in place before dragging it
+  out.
+- Low-resource mode: skip thumbnails and slow clipboard and screenshot
+  polling on battery.
+
+**Swift add-ons (Phase 9b), now unblocked by the Developer ID**
+- Share extension, Shortcuts actions (App Intents) and a widget, in a
+  small Xcode project embedded by `bundle.sh` and signed like the rest.
+  The widget also needs an App Group.
+
+**Release and distribution**
+- A real Sparkle update in the field: the flow was tested end to end with
+  a local feed, but the first update from GitHub happens with the next
+  full release after 0.3.0. Check it then.
+- Release notes in updates: Sparkle's window only links to the GitHub
+  release. A `CHANGELOG.md` section per version, rendered into the
+  appcast like CleanShotZ does, would show them in the update window.
+- Homebrew cask in `houseofmackee/homebrew-tap`, updated by the release
+  workflow with a deploy key (the CleanShotZ `TAP_DEPLOY_KEY` pattern).
+
+**Testing**
+- Integration tests for the CLI and IPC socket.
+- The manual QA pass per release (section 6): Finder, Safari, Mail,
+  Photos, Notes, full-screen apps, several displays, Spaces, Stage
+  Manager, external volumes.
+- An Instruments pass for idle CPU and memory, now that the clipboard,
+  expiry and screenshot timers all run.
+
+**Deferred, low priority**
+- Dropping colors (Phase 2).
+- A "show in Dock" toggle and adjustable gesture timing (Phase 8).
+- Sharing shelves across Macs (section 8).
