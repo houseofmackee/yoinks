@@ -37,6 +37,9 @@ jobs:
             echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
             exit 1
           fi
+          if ! python3 -I scripts/release-notes.py "$version" > /dev/null; then
+            echo "::warning::CHANGELOG.md has no section for $version; the release and update window get no notes"
+          fi
 
       - name: Import the signing certificate
         env:
@@ -111,7 +114,10 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           notes="$RUNNER_TEMP/notes.md"
-          cat > "$notes" <<NOTES
+          # This version's CHANGELOG.md section first, if there is one.
+          python3 -I scripts/release-notes.py "$version" > "$notes" || : > "$notes"
+          cat >> "$notes" <<NOTES
+
           ## Installing
 
           Download \`Yoinks-$version.dmg\` (or the zip), open it and drag Yoinks into Applications. It is signed with a Developer ID and notarized by Apple, so it opens like any other app.

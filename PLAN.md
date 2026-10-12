@@ -58,6 +58,7 @@ src/
     actions.rs       quick actions: zip, image convert/resize, rename rules
     prompt.rs        non-activating Rename prompt
     ocr.rs           Vision text recognition for Copy Text
+    search.rs        matching entries against a shelf search
   drag/
     monitor.rs       shows/hides the shelf for system-wide drags
     tracker.rs       pure drag recognition state machine
@@ -341,6 +342,10 @@ Key design points:
   validating are retried up to five times, because the CI runner's
   connection to Apple's ticket server dropped twice on the first v0.3.0
   run.
+- [x] `CHANGELOG.md` (2026-10-12): each version's section is rendered
+  by `scripts/release-notes.py` into the appcast (shown in Sparkle's
+  update window) and put at the top of the GitHub release notes; the
+  workflow warns if a tag has no section.
 - [x] v0.3.0 (2026-10-12): the first full release that is Developer ID
   signed, notarized and carries Sparkle, with its `appcast.xml` as the
   update feed. Installed in /Applications from the release DMG.
@@ -395,7 +400,7 @@ Key design points:
 | --- | --- | --- |
 | Multiple named shelves | Switch between shelves (for example "Invoices", "Design assets"), each persisted separately | To do |
 | Pinned items | Pin shelf items so they stay after being dragged out | Done: pin badge, kept after drag out and Clear Shelf |
-| Search and filter | Type to filter shelf and clipboard history by name, kind or content | Clipboard history has search; the shelf does not |
+| Search and filter | Type to filter shelf and clipboard history by name, kind or content | Done: typing on the shelf or ⌘F filters it by name, link, kind and text contents |
 | Quick actions on items | Right-click: rename, compress to zip, convert image format, resize image, copy path, open with | Done (rename is for items Yoinks saved; results are new items) |
 | Text snippet editing | Edit a text clipping inline before dragging it out | To do |
 | Auto-expiry | Optionally remove items older than N hours/days | Done: Preferences > General, 1 hour to 30 days; pinned items stay |
@@ -445,8 +450,6 @@ Key design points:
 ## 9. What's left (as of v0.3.0, 2026-10-12)
 
 **Features (section 5)**
-- Shelf search and filter: type to narrow the shelf by name, kind or
-  content, like clipboard history already does.
 - Multiple named shelves, each persisted separately, with a switcher.
 - Text snippet editing: edit a text clipping in place before dragging it
   out.
@@ -462,9 +465,6 @@ Key design points:
 - A real Sparkle update in the field: the flow was tested end to end with
   a local feed, but the first update from GitHub happens with the next
   full release after 0.3.0. Check it then.
-- Release notes in updates: Sparkle's window only links to the GitHub
-  release. A `CHANGELOG.md` section per version, rendered into the
-  appcast like CleanShotZ does, would show them in the update window.
 - Homebrew cask in `houseofmackee/homebrew-tap`, updated by the release
   workflow with a deploy key (the CleanShotZ `TAP_DEPLOY_KEY` pattern).
 

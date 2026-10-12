@@ -27,6 +27,8 @@ Requires macOS 13 or later on Apple Silicon.
   to recall the last item, press twice to add the clipboard.
 - **Quick Look and thumbnails.** Space previews the selected item; arrows,
   Return, Delete and ⌘C work too, and ⌘V adds the clipboard.
+- **Search.** Start typing on the shelf (or press ⌘F) to narrow it down by
+  name, link, kind or the text inside text items.
 - **Quick actions.** Right-click a tile for Open With, Copy, Copy Path,
   Rename (text, links and images Yoinks saved), Compress to zip, Copy Text
   (recognizes the text in an image), and Convert or Resize images. Results
@@ -81,6 +83,7 @@ of the shelf, and opening Yoinks again brings up the shelf.
 | Copy it, rename it, zip it, convert an image | Right-click > Copy, Rename…, Compress, Convert Image |
 | Get the text out of an image | Right-click > Copy Text |
 | Paste onto the shelf | Click the shelf and press ⌘V |
+| Find something on the shelf | Click the shelf and start typing, or press ⌘F; Escape ends the search |
 | Move the shelf | Drag its background (between or below the tiles) |
 | Put it back at the edge | Menu bar or gear > Move Shelf Back to Edge |
 | Clipboard history | Menu bar (or the shelf's gear) > Clipboard History… (type to search, Return copies) |
@@ -171,7 +174,9 @@ release), `cargo test`, a release bundle build and `cargo deny check` (see
 ### Releasing
 
 Releases are built and published by GitHub Actions, not from a local machine.
-Bump the version in `Cargo.toml`, commit, then push a matching tag:
+Move the `[Unreleased]` entries in `CHANGELOG.md` under a new
+`## [x.y.z] (date)` heading, bump the version in `Cargo.toml`, commit, then
+push a matching tag:
 
 ```sh
 git tag v0.2.0 && git push origin master v0.2.0
@@ -182,7 +187,9 @@ with the Developer ID Application certificate from the repository secrets
 `DEVELOPER_ID_P12_BASE64` and `DEVELOPER_ID_P12_PASSWORD`, notarizes with
 the App Store Connect API key in `NOTARY_API_KEY_BASE64` (and the
 `APPLE_TEAM_ID`, `NOTARY_KEY_ID` and `NOTARY_ISSUER_ID` variables), signs
-the update feed with `SPARKLE_PRIVATE_KEY`, runs `scripts/dist.sh` and
+the update feed with `SPARKLE_PRIVATE_KEY`, uses the version's
+`CHANGELOG.md` section (`scripts/release-notes.py`) as the notes in the
+update window and on the GitHub release, runs `scripts/dist.sh` and
 publishes the DMG, zip, `SHA256SUMS.txt` and `appcast.xml`. Keep backups
 of the `.p12`, `.p8` and Sparkle key outside GitHub. Tags with a hyphen
 (`v0.2.0-beta.1`) become pre-releases; installed copies only update to
@@ -191,9 +198,9 @@ releases by hand with `gh release create`.
 
 ## Status
 
-See [PLAN.md](PLAN.md) for the roadmap. Still to do: optional Swift add-ons
-(Share extension, Shortcuts actions, widget), named shelves, shelf search
-and text editing.
+See [PLAN.md](PLAN.md) for the roadmap and [CHANGELOG.md](CHANGELOG.md) for
+what changed in each version. Still to do: optional Swift add-ons (Share
+extension, Shortcuts actions, widget), named shelves and text editing.
 
 Release builds include [Sparkle](https://sparkle-project.org) for updates,
 under its own MIT-style license; the notice ships in the app as

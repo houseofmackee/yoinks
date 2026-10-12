@@ -13,6 +13,7 @@ mod pasteboard;
 mod promise;
 mod prompt;
 mod recent;
+mod search;
 mod store;
 mod thumbnail;
 mod tile;

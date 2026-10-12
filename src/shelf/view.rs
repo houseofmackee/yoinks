@@ -6,20 +6,21 @@ use std::rc::Weak;
 
 use objc2::ClassType;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, ProtocolObject};
+use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSBeep, NSColor, NSDragOperation, NSDraggingInfo, NSEvent, NSEventType, NSLayoutAttribute,
-    NSLayoutConstraint, NSMenu, NSMenuItem, NSMenuItemImportFromDeviceIdentifier, NSPasteboard,
-    NSPasteboardType, NSResponder, NSScrollView, NSStackView, NSTextAlignment, NSTextField,
-    NSUserInterfaceItemIdentification, NSUserInterfaceLayoutOrientation, NSView,
-    NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
-    NSWindowDelegate,
+    NSBeep, NSColor, NSControl, NSControlTextEditingDelegate, NSDragOperation, NSDraggingInfo,
+    NSEvent, NSEventModifierFlags, NSEventType, NSLayoutAttribute, NSLayoutConstraint, NSMenu,
+    NSMenuItem, NSMenuItemImportFromDeviceIdentifier, NSPasteboard, NSPasteboardType, NSResponder,
+    NSScrollView, NSSearchField, NSSearchFieldDelegate, NSStackView, NSTextAlignment, NSTextField,
+    NSTextFieldDelegate, NSTextView, NSUserInterfaceItemIdentification,
+    NSUserInterfaceLayoutOrientation, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
+    NSVisualEffectState, NSVisualEffectView, NSWindowDelegate,
 };
 use objc2_app_kit::{NSScroller, NSTrackingArea, NSTrackingAreaOptions};
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSEdgeInsets, NSInteger, NSObject, NSObjectProtocol, NSPoint,
-    NSRect, NSSize, ns_string,
+    NSRange, NSRect, NSSize, NSString, ns_string,
 };
 use objc2_quick_look_ui::{
     QLPreviewItem, QLPreviewPanel, QLPreviewPanelDataSource, QLPreviewPanelDelegate,
@@ -30,6 +31,7 @@ use super::item::Entry;
 use super::menu_button::MenuButton;
 use super::model::ShelfModel;
 use super::pasteboard;
+use super::search::Query;
 use super::tile::TileView;
 use crate::ui::menu_item;
 
@@ -86,6 +88,11 @@ pub struct ContentIvars {
     on_event: RefCell<Option<EventHandler>>,
     press: Cell<Option<Press>>,
     scroll: OnceCell<Retained<NSScrollView>>,
+    /// Shown at the top while searching (⌘F or typing on the shelf).
+    search: Retained<NSSearchField>,
+    query: RefCell<Option<Query>>,
+    /// The tiles' top edge: at the shelf's top, or below the search field.
+    scroll_top: OnceCell<[Retained<NSLayoutConstraint>; 2]>,
 }
 
 define_class!(
@@ -142,7 +149,7 @@ define_class!(
 
         #[unsafe(method(keyDown:))]
         fn key_down(&self, event: &NSEvent) {
-            if !self.handle_key(event) {
+            if !self.handle_key(event) && !self.search_key(event) {
                 // SAFETY: Calling the superclass implementation of the same method.
                 let _: () = unsafe { msg_send![super(self), keyDown: event] };
             }
@@ -225,6 +232,22 @@ define_class!(
             if !copied {
                 NSBeep();
             }
+        }
+
+        // The search field's text changed (or its clear button was clicked).
+        #[unsafe(method(searchChanged:))]
+        fn search_changed(&self, _sender: Option<&AnyObject>) {
+            let text = self.ivars().search.stringValue().to_string();
+            let query = Query::parse(&text);
+            if *self.ivars().query.borrow() != query {
+                *self.ivars().query.borrow_mut() = query;
+                self.refilter();
+            }
+        }
+
+        #[unsafe(method(beginSearch:))]
+        fn begin_search_action(&self, _sender: Option<&AnyObject>) {
+            self.begin_search("");
         }
 
         // ⌘V (Edit > Paste) adds whatever is on the clipboard.
@@ -393,6 +416,22 @@ define_class!(
                 .unwrap_or(NSRect::ZERO)
         }
     }
+
+    // SAFETY: The method signature matches the protocol.
+    unsafe impl NSControlTextEditingDelegate for ShelfContentView {
+        // In the search field: Escape ends the search; Down and Return move
+        // to the first match.
+        #[unsafe(method(control:textView:doCommandBySelector:))]
+        fn search_command(&self, _control: &NSControl, _text_view: &NSTextView, command: Sel) -> bool {
+            self.handle_search_command(command)
+        }
+    }
+
+    // SAFETY: No required methods.
+    unsafe impl NSTextFieldDelegate for ShelfContentView {}
+
+    // SAFETY: No required methods.
+    unsafe impl NSSearchFieldDelegate for ShelfContentView {}
 );
 
 /// Files stay where they are, so the drop is a reference rather than a copy
@@ -426,6 +465,11 @@ impl ShelfContentView {
         placeholder.setAlignment(NSTextAlignment::Center);
         placeholder.setTextColor(Some(&NSColor::secondaryLabelColor()));
 
+        let search = NSSearchField::new(mtm);
+        search.setPlaceholderString(Some(ns_string!("Search")));
+        search.setSendsSearchStringImmediately(true);
+        search.setHidden(true);
+
         let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(112.0, 200.0));
         let this = Self::alloc(mtm).set_ivars(ContentIvars {
             model,
@@ -438,6 +482,9 @@ impl ShelfContentView {
             on_event: RefCell::new(None),
             press: Cell::new(None),
             scroll: OnceCell::new(),
+            search,
+            query: RefCell::new(None),
+            scroll_top: OnceCell::new(),
         });
         // SAFETY: `initWithFrame:` is NSView's designated initializer.
         let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: rect] };
@@ -486,22 +533,49 @@ impl ShelfContentView {
         self.addSubview(&scroll);
         self.addSubview(&ivars.placeholder);
         self.addSubview(&ivars.menu_button);
+        self.addSubview(&ivars.search);
+        // SAFETY: Actions take one sender argument; we outlive the field.
+        unsafe {
+            ivars.search.setTarget(Some(self.as_ref()));
+            ivars.search.setAction(Some(sel!(searchChanged:)));
+            ivars
+                .search
+                .setDelegate(Some(ProtocolObject::from_ref(self)));
+        }
 
         let clip = scroll.contentView();
-        let views: [&NSView; 5] = [
+        let views: [&NSView; 6] = [
             &scroll,
             &document,
             &ivars.list,
             &ivars.placeholder,
             &ivars.menu_button,
+            &ivars.search,
         ];
         for view in views {
             view.setTranslatesAutoresizingMaskIntoConstraints(false);
         }
+        let top = scroll
+            .topAnchor()
+            .constraintEqualToAnchor(&self.topAnchor());
+        let below_search = scroll
+            .topAnchor()
+            .constraintEqualToAnchor_constant(&ivars.search.bottomAnchor(), 4.0);
+        let _ = ivars.scroll_top.set([top.clone(), below_search]);
         NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[
-            scroll
+            top,
+            ivars
+                .search
                 .topAnchor()
-                .constraintEqualToAnchor(&self.topAnchor()),
+                .constraintEqualToAnchor_constant(&self.topAnchor(), 8.0),
+            ivars
+                .search
+                .leadingAnchor()
+                .constraintEqualToAnchor_constant(&self.leadingAnchor(), 8.0),
+            ivars
+                .search
+                .trailingAnchor()
+                .constraintEqualToAnchor_constant(&self.trailingAnchor(), -8.0),
             scroll
                 .bottomAnchor()
                 .constraintEqualToAnchor_constant(&ivars.menu_button.topAnchor(), -2.0),
@@ -563,6 +637,15 @@ impl ShelfContentView {
     /// entry still exists.
     pub fn reload(&self, model: &ShelfModel, entries: &[Entry]) {
         let ivars = self.ivars();
+        let query = ivars.query.borrow().clone();
+        let matching: Vec<&Entry> = match &query {
+            Some(query) => entries
+                .iter()
+                .filter(|entry| query.matches(entry, &|item| model.search_text(item)))
+                .collect(),
+            None => entries.iter().collect(),
+        };
+        let entries = matching.as_slice();
         for view in ivars.list.arrangedSubviews().iter() {
             ivars.list.removeArrangedSubview(&view);
             view.removeFromSuperview();
@@ -583,6 +666,11 @@ impl ShelfContentView {
             );
             ivars.list.addArrangedSubview(&tile);
         }
+        ivars.placeholder.setStringValue(if query.is_some() {
+            ns_string!("No matches")
+        } else {
+            ns_string!("Drop items here")
+        });
         ivars.placeholder.setHidden(!entries.is_empty());
         self.notify(ViewEvent::Changed);
         *ivars.order.borrow_mut() = entries.iter().map(|entry| entry.id).collect();
@@ -605,6 +693,13 @@ impl ShelfContentView {
             "v",
             None,
         ));
+        menu.addItem(&menu_item(
+            mtm,
+            "Search Shelf",
+            sel!(beginSearch:),
+            "f",
+            Some(self.as_ref()),
+        ));
         menu.addItem(&NSMenuItem::separatorItem(mtm));
         // AppKit replaces this item with the nearby devices' "Take Photo",
         // "Scan Documents" and "Add Sketch" commands.
@@ -614,6 +709,109 @@ impl ShelfContentView {
         import.setIdentifier(Some(unsafe { NSMenuItemImportFromDeviceIdentifier }));
         menu.addItem(&import);
         menu
+    }
+
+    /// Shows the search field with `text` in it and puts the cursor there.
+    pub fn begin_search(&self, text: &str) {
+        let ivars = self.ivars();
+        if let Some([top, below_search]) = ivars.scroll_top.get() {
+            top.setActive(false);
+            below_search.setActive(true);
+        }
+        ivars.search.setHidden(false);
+        if !text.is_empty() {
+            ivars.search.setStringValue(&NSString::from_str(text));
+        }
+        if let Some(window) = self.window() {
+            window.makeKeyWindow();
+            window.makeFirstResponder(Some(&ivars.search));
+        }
+        if let Some(editor) = ivars.search.currentEditor() {
+            let end = ivars.search.stringValue().length();
+            editor.setSelectedRange(NSRange::new(end, 0));
+        }
+        // SAFETY: Our own action method; it takes one sender argument.
+        let _: () = unsafe { msg_send![self, searchChanged: None::<&AnyObject>] };
+    }
+
+    /// Clears and hides the search field, showing every entry again.
+    pub fn end_search(&self) {
+        let ivars = self.ivars();
+        if ivars.search.isHidden() {
+            return;
+        }
+        let focused = self
+            .window()
+            .and_then(|window| window.firstResponder())
+            .is_some_and(|responder| {
+                ivars.search.currentEditor().is_some_and(|editor| {
+                    std::ptr::eq(&*responder, editor.as_ref() as &NSResponder)
+                })
+            });
+        ivars.search.setStringValue(ns_string!(""));
+        ivars.search.setHidden(true);
+        if let Some([top, below_search]) = ivars.scroll_top.get() {
+            below_search.setActive(false);
+            top.setActive(true);
+        }
+        if ivars.query.borrow_mut().take().is_some() {
+            self.refilter();
+        }
+        if focused && let Some(window) = self.window() {
+            window.makeFirstResponder(Some(self));
+        }
+    }
+
+    fn refilter(&self) {
+        if let Some(model) = self.ivars().model.upgrade() {
+            self.reload(&model, &model.entries());
+        }
+    }
+
+    /// ⌘F, or a letter, number or symbol typed on the shelf, starts a search.
+    fn search_key(&self, event: &NSEvent) -> bool {
+        let flags = event.modifierFlags();
+        let chars = event
+            .charactersIgnoringModifiers()
+            .map(|c| c.to_string())
+            .unwrap_or_default();
+        if flags.contains(NSEventModifierFlags::Command) {
+            if chars.eq_ignore_ascii_case("f") {
+                self.begin_search("");
+                return true;
+            }
+            return false;
+        }
+        if flags.intersects(NSEventModifierFlags::Control | NSEventModifierFlags::Option) {
+            return false;
+        }
+        let typed = event
+            .characters()
+            .map(|c| c.to_string())
+            .unwrap_or_default();
+        let printable = !typed.is_empty()
+            && typed.chars().all(|c| {
+                !c.is_control() && !c.is_whitespace() && !('\u{f700}'..='\u{f8ff}').contains(&c)
+            });
+        if printable {
+            self.begin_search(&typed);
+        }
+        printable
+    }
+
+    fn handle_search_command(&self, command: Sel) -> bool {
+        if command == sel!(cancelOperation:) {
+            self.end_search();
+        } else if command == sel!(moveDown:) || command == sel!(insertNewline:) {
+            let first = self.ivars().order.borrow().first().copied();
+            match first {
+                Some(id) => self.select(Some(id)),
+                None => NSBeep(),
+            }
+        } else {
+            return false;
+        }
+        true
     }
 
     /// Where `ViewEvent`s go (the shelf).

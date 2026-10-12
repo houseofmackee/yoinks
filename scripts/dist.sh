@@ -101,7 +101,9 @@ ditto -c -k --sequesterRsrc --keepParent "$app" "$dist/$zip"
 cat "$dist/SHA256SUMS.txt"
 
 # Sparkle downloads the zip; the feed lists only this release, with its
-# signature, and is itself signed (the app requires a signed feed).
+# signature and this version's CHANGELOG.md section as the notes shown in
+# the update window, and is itself signed (the app requires a signed
+# feed).
 # YOINKS_UPDATE_BASE_URL serves a test update from elsewhere.
 if [ -n "${YOINKS_SPARKLE_KEY:-}" ]; then
     sign_update="$(scripts/sparkle.sh)/bin/sign_update"
@@ -110,6 +112,10 @@ if [ -n "${YOINKS_SPARKLE_KEY:-}" ]; then
     date=$(LC_ALL=C date -u "+%a, %d %b %Y %H:%M:%S +0000")
     repository=https://github.com/houseofmackee/yoinks
     base=${YOINKS_UPDATE_BASE_URL:-$repository/releases/download/v$version}
+    if ! notes=$(python3 -I scripts/release-notes.py --html "$version"); then
+        echo "warning: CHANGELOG.md has no section for $version; the update window only links to the release" >&2
+        notes="<p>Yoinks $version is available. See the <a href=\"$repository/releases/tag/v$version\">release notes</a> for what changed.</p>"
+    fi
     cat > "$dist/appcast.xml" <<APPCAST
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
@@ -123,7 +129,7 @@ if [ -n "${YOINKS_SPARKLE_KEY:-}" ]; then
       <sparkle:shortVersionString>$version</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
       <sparkle:fullReleaseNotesLink>$repository/releases/tag/v$version</sparkle:fullReleaseNotesLink>
-      <description><![CDATA[<p>Yoinks $version is available. See the <a href="$repository/releases/tag/v$version">release notes</a> for what changed.</p>]]></description>
+      <description><![CDATA[$notes]]></description>
       <enclosure url="$base/$zip" length="$length" type="application/octet-stream" sparkle:edSignature="$signature"/>
     </item>
   </channel>

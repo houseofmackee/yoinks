@@ -394,6 +394,22 @@ impl ShelfModel {
         self.accept(pasteboard::read(&NSPasteboard::generalPasteboard()))
     }
 
+    /// The text of a text item, for searching the shelf (the first 64 KB).
+    pub fn search_text(&self, item: &Item) -> Option<String> {
+        use std::io::Read;
+        const LIMIT: u64 = 64 * 1024;
+        if item.kind != ItemKind::Text {
+            return None;
+        }
+        let mut text = Vec::new();
+        fs::File::open(&item.path)
+            .ok()?
+            .take(LIMIT)
+            .read_to_end(&mut text)
+            .ok()?;
+        Some(String::from_utf8_lossy(&text).into_owned())
+    }
+
     /// The cached Quick Look thumbnail for `item`; if there is none yet,
     /// one is generated in the background and the view reloads when ready.
     pub fn thumbnail(&self, mtm: MainThreadMarker, item: &Item) -> Option<PathBuf> {

@@ -415,6 +415,8 @@ impl Shelf {
 
     pub fn hide(&self) {
         self.disarm_auto_hide();
+        // A search is for this visit; the shelf comes back unfiltered.
+        self.model.view().end_search();
         if self.visibility.get() != Visibility::Shown {
             return;
         }
