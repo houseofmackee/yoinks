@@ -53,8 +53,8 @@ Requires macOS 13 or later on Apple Silicon.
 
 1. Download `Yoinks-<version>.dmg` from
    [Releases](https://github.com/houseofmackee/yoinks/releases) (the current
-   pre-release is
-   [0.2.0-beta.1](https://github.com/houseofmackee/yoinks/releases/tag/v0.2.0-beta.1)), open
+   release is
+   [0.3.0](https://github.com/houseofmackee/yoinks/releases/tag/v0.3.0)), open
    it and drag Yoinks into Applications. To build it yourself, see
    [Building](#building).
 2. Releases after 0.2.0-beta.1 are signed with a Developer ID and notarized
