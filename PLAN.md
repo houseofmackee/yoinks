@@ -386,6 +386,9 @@ Key design points:
   preferences tab. The first real update over GitHub: the installed 0.3.0
   offered 0.4.0 with its changelog notes, then downloaded, verified,
   installed and relaunched it; the result is still notarized.
+- [x] v0.6.1 (2026-10-12): the shorter Preferences (new Adding tab) and
+  windows that open on the current desktop. Installed through Sparkle;
+  the cask followed.
 - [x] Preferences fit again (2026-10-12): the Shelf tab had grown to
   about 860 points; notch, screenshots and watched folders moved to a new
   Adding tab (tallest tab now about 550). Preferences, Clipboard History
@@ -503,7 +506,7 @@ Key design points:
   behind a trait so a sync backend (iCloud via CloudKit, or a shared folder)
   can be added later without reworking the model.
 
-## 9. What's left (as of v0.6.0, 2026-10-12)
+## 9. What's left (as of v0.6.1, 2026-10-12)
 
 **Check on the installed app**
 - The Shortcuts actions in the Shortcuts app, and the App Shortcuts
@@ -520,6 +523,10 @@ Key design points:
   checked with the built-in display as the main one.
 - Reordering while a search filters the shelf (the drop goes before the
   visible tile under the pointer; only the unfiltered case was tried).
+- Windows that aren't Yoinks' own (Sparkle's update windows, the delete
+  confirmation, the folder picker) on another desktop: Preferences,
+  Clipboard History and the naming prompts follow the active desktop
+  since 0.6.1, but these were not tried there.
 
 **Features**
 - The widget (recent shelf items or clips). Needs an App Group with the
