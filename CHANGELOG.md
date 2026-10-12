@@ -7,6 +7,8 @@ shown in the update window and on its GitHub release.
 
 ## [Unreleased]
 
+## [0.4.0] (2026-10-12)
+
 ### Added
 
 - Search the shelf: start typing on the shelf, or press ⌘F (also in the
