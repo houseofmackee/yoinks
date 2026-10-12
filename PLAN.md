@@ -365,6 +365,9 @@ Key design points:
   run.
 - [x] `yoinks shelf [<name>]` and a `shelf` request switch or list
   shelves; responses carry the current shelf and all shelf names.
+- [x] README screenshots (2026-10-12) in `docs/screenshots`, staged
+  with demo data in a scratch data folder in front of a plain backdrop
+  window (the shelf and menus are translucent).
 - [x] `CHANGELOG.md` (2026-10-12): each version's section is rendered
   by `scripts/release-notes.py` into the appcast (shown in Sparkle's
   update window) and put at the top of the GitHub release notes; the
