@@ -25,6 +25,7 @@ use super::bookmark;
 use super::describe::{self, FileFacts};
 use super::item::{Entry, Item, ItemKind, file_name};
 use super::materialize::ItemsDir;
+use super::ocr;
 use super::pasteboard::{self, Dropped};
 use super::recent::Recent;
 use super::store::{JsonFile, ShelfStore};
@@ -323,6 +324,34 @@ impl ShelfModel {
         });
     }
 
+    /// Copy Text: recognizes the text in the entry's images on a background
+    /// thread and puts it on the clipboard. Beeps if there is none.
+    pub fn copy_text(&self, id: Uuid) {
+        let images = self.image_paths(id);
+        if images.is_empty() {
+            objc2_app_kit::NSBeep();
+            return;
+        }
+        std::thread::spawn(move || {
+            let result = ocr::recognize_text(&images);
+            DispatchQueue::main().exec_async(move || {
+                let text = result
+                    .inspect_err(|error| eprintln!("yoinks: text recognition failed: {error}"))
+                    .unwrap_or_default();
+                if text.trim().is_empty() {
+                    objc2_app_kit::NSBeep();
+                    return;
+                }
+                let general = NSPasteboard::generalPasteboard();
+                general.clearContents();
+                // SAFETY: Reading an immutable framework constant.
+                general.setString_forType(&NSString::from_str(&text), unsafe {
+                    objc2_app_kit::NSPasteboardTypeString
+                });
+            });
+        });
+    }
+
     fn job_finished(&self, out_dir: &Path, result: std::io::Result<Vec<PathBuf>>) {
         let items: Vec<Item> = match result {
             Ok(paths) => paths
@@ -532,6 +561,21 @@ impl ShelfModel {
         let removed = self.store.borrow_mut().remove(id);
         if let Some(entry) = removed {
             self.delete_files(&[entry]);
+            self.reload();
+        }
+    }
+
+    /// Removes unpinned entries older than `max_age`.
+    pub fn expire(&self, max_age: std::time::Duration) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let removed = self
+            .store
+            .borrow_mut()
+            .expire(now.saturating_sub(max_age.as_secs()));
+        if !removed.is_empty() {
+            self.delete_files(&removed);
             self.reload();
         }
     }

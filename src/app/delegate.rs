@@ -3,7 +3,10 @@
 
 use std::cell::{OnceCell, RefCell};
 use std::path::PathBuf;
+use std::ptr::NonNull;
 use std::rc::Rc;
+
+use block2::RcBlock;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
@@ -13,7 +16,7 @@ use objc2_app_kit::{
     NSMenu, NSMenuItem, NSMenuItemValidation, NSPasteboard, NSStatusItem,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSArray, NSNotification, NSPoint, NSString, NSURL, ns_string,
+    MainThreadMarker, NSArray, NSNotification, NSPoint, NSString, NSTimer, NSURL, ns_string,
 };
 
 use super::{commands, status_item};
@@ -23,6 +26,7 @@ use crate::hotkey::{Gesture, HotKey};
 use crate::ipc::{self, Request, server};
 use crate::paths;
 use crate::preferences::{PreferencesHooks, PreferencesWindow};
+use crate::screenshots::ScreenshotWatcher;
 use crate::settings::Settings;
 use crate::settings::ShelfPosition;
 use crate::shelf::{HIDE_AFTER_ADD, Shelf, ShelfModel, read_pasteboard};
@@ -40,7 +44,14 @@ pub struct Ivars {
     clipboard: OnceCell<Rc<ClipboardHistory>>,
     history_list: OnceCell<Retained<HistoryList>>,
     preferences: OnceCell<Retained<PreferencesWindow>>,
+    /// Removes expired entries (`shelf_expiry_hours`).
+    expiry_timer: OnceCell<Retained<NSTimer>>,
+    /// Running while `add_screenshots` is on.
+    screenshots: RefCell<Option<Rc<ScreenshotWatcher>>>,
 }
+
+/// How often expired entries are looked for, in seconds.
+const EXPIRY_CHECK: f64 = 60.0;
 
 define_class!(
     // SAFETY:
@@ -125,6 +136,10 @@ define_class!(
                 Some(delegate) => delegate.app_menu(),
                 None => NSMenu::new(mtm),
             });
+            crate::updates::start(mtm);
+            self.start_expiry_timer();
+            self.expire_entries();
+            self.update_screenshot_watcher();
         }
 
         // Files opened with Yoinks go on the shelf (one stack); `yoinks://`
@@ -182,6 +197,15 @@ define_class!(
                     item.setState(if paused { NSControlStateValueOn } else { NSControlStateValueOff });
                 }
                 clipboard.is_some()
+            } else if action == Some(sel!(checkForUpdates:)) {
+                let available = crate::updates::available();
+                item.setHidden(!available);
+                let title = match crate::updates::found() {
+                    Some(version) => format!("Update to Yoinks {version}…"),
+                    None => "Check for Updates…".to_owned(),
+                };
+                item.setTitle(&NSString::from_str(&title));
+                available
             } else if action == Some(sel!(clearShelf:)) {
                 // Clear Shelf leaves pinned items alone.
                 model.has_unpinned()
@@ -243,6 +267,11 @@ define_class!(
             if let Some(clipboard) = self.ivars().clipboard.get() {
                 clipboard.set_paused(!clipboard.is_paused());
             }
+        }
+
+        #[unsafe(method(checkForUpdates:))]
+        fn check_for_updates(&self, _sender: Option<&AnyObject>) {
+            crate::updates::check(self.mtm());
         }
 
         #[unsafe(method(showPreferences:))]
@@ -349,6 +378,12 @@ impl AppDelegate {
         if let Some(clipboard) = ivars.clipboard.get() {
             clipboard.apply(&settings);
         }
+        if old.shelf_expiry_hours != settings.shelf_expiry_hours {
+            self.expire_entries();
+        }
+        if old.add_screenshots != settings.add_screenshots {
+            self.update_screenshot_watcher();
+        }
         if old.hotkey == settings.hotkey {
             return Ok(());
         }
@@ -357,6 +392,47 @@ impl AppDelegate {
             status_item::rebuild_menu(self.mtm(), item, self, settings.shortcut().as_ref());
         }
         result
+    }
+
+    fn start_expiry_timer(&self) {
+        let weak = objc2::rc::Weak::new(self);
+        let block = RcBlock::new(move |_timer: NonNull<NSTimer>| {
+            if let Some(delegate) = weak.load() {
+                delegate.expire_entries();
+            }
+        });
+        // SAFETY: Scheduled on the main run loop; the block only touches
+        // main-thread state.
+        let timer = unsafe {
+            NSTimer::scheduledTimerWithTimeInterval_repeats_block(EXPIRY_CHECK, true, &block)
+        };
+        let _ = self.ivars().expiry_timer.set(timer);
+    }
+
+    /// Removes unpinned entries older than `shelf_expiry_hours`, if set.
+    fn expire_entries(&self) {
+        let max_age = self.ivars().settings.borrow().shelf_max_age();
+        if let Some(max_age) = max_age {
+            self.shelf().model().expire(max_age);
+        }
+    }
+
+    /// Starts or stops watching for screenshots to match `add_screenshots`.
+    fn update_screenshot_watcher(&self) {
+        let ivars = self.ivars();
+        let on = ivars.settings.borrow().add_screenshots;
+        let mut watcher = ivars.screenshots.borrow_mut();
+        if !on {
+            watcher.take();
+        } else if watcher.is_none() {
+            let shelf = Rc::clone(self.shelf());
+            *watcher = Some(ScreenshotWatcher::start(move |paths| {
+                let response = commands::handle(&shelf, Request::add_paths(paths));
+                if !response.ok {
+                    eprintln!("yoinks: {}", response.error.unwrap_or_default());
+                }
+            }));
+        }
     }
 
     fn make_preferences(&self) -> Retained<PreferencesWindow> {

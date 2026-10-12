@@ -8,6 +8,7 @@ name: Release
 #   DEVELOPER_ID_P12_BASE64    the Developer ID Application certificate and key
 #   DEVELOPER_ID_P12_PASSWORD  its password
 #   NOTARY_API_KEY_BASE64      an App Store Connect API key (.p8, Developer role)
+#   SPARKLE_PRIVATE_KEY        the EdDSA key that signs updates and appcast.xml
 # and these variables: APPLE_TEAM_ID, NOTARY_KEY_ID, NOTARY_ISSUER_ID.
 # Every release must be signed by the same team: the signature is what
 # keeps users' permissions across updates.
@@ -76,12 +77,24 @@ jobs:
           fi
           echo "$KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/notary.p8"
 
+      - name: Write the update signing key
+        env:
+          SPARKLE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SPARKLE_KEY" ]; then
+            echo "::error::SPARKLE_PRIVATE_KEY must be set"
+            exit 1
+          fi
+          printf '%s\n' "$SPARKLE_KEY" > "$RUNNER_TEMP/sparkle_key"
+          chmod 600 "$RUNNER_TEMP/sparkle_key"
+
       - name: Build, notarize and package
         env:
           YOINKS_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
           YOINKS_NOTARY_KEY: ${{ runner.temp }}/notary.p8
           YOINKS_NOTARY_KEY_ID: ${{ vars.NOTARY_KEY_ID }}
           YOINKS_NOTARY_ISSUER: ${{ vars.NOTARY_ISSUER_ID }}
+          YOINKS_SPARKLE_KEY: ${{ runner.temp }}/sparkle_key
           YOINKS_SKIP_REGISTER: "1"
         run: |
           if [ -z "$YOINKS_TEAM_ID" ] || [ -z "$YOINKS_NOTARY_KEY_ID" ] || [ -z "$YOINKS_NOTARY_ISSUER" ]; then
@@ -91,6 +104,7 @@ jobs:
           scripts/dist.sh
           # Fail rather than publish anything Gatekeeper would block.
           xcrun stapler validate "target/dist/Yoinks-${GITHUB_REF_NAME#v}.dmg"
+          test -s target/dist/appcast.xml
 
       - name: Publish the release
         env:
@@ -103,16 +117,17 @@ jobs:
 
           Download \`Yoinks-$version.dmg\` (or the zip), open it and drag Yoinks into Applications. It is signed with a Developer ID and notarized by Apple, so it opens like any other app.
 
-          Requires macOS 13 or later on Apple silicon. Checksums are in \`SHA256SUMS.txt\`.
+          Requires macOS 13 or later on Apple silicon. Checksums are in \`SHA256SUMS.txt\`. Yoinks updates itself (menu bar > Check for Updates…); pre-releases are not offered as updates.
           NOTES
           prerelease=""
           case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" $prerelease --generate-notes --notes-file "$notes" \
             --title "Yoinks $version" \
-            target/dist/Yoinks-$version.dmg target/dist/Yoinks-$version.zip target/dist/SHA256SUMS.txt
+            target/dist/Yoinks-$version.dmg target/dist/Yoinks-$version.zip target/dist/SHA256SUMS.txt \
+            target/dist/appcast.xml
 
       - name: Remove the temporary keychain and key
         if: always()
         run: |
           security delete-keychain "$RUNNER_TEMP/release.keychain-db" || true
-          rm -f "$RUNNER_TEMP/notary.p8"
+          rm -f "$RUNNER_TEMP/notary.p8" "$RUNNER_TEMP/sparkle_key"

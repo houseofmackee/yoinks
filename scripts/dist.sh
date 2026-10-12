@@ -5,6 +5,9 @@
 #   Yoinks-<version>.zip  the same Yoinks.app, zipped with ditto, which keeps
 #                         the signature intact
 #   SHA256SUMS.txt        checksums of both
+#   appcast.xml           Sparkle's update feed for this release, signed,
+#                         when YOINKS_SPARKLE_KEY (the path to the EdDSA
+#                         private key) is set
 #
 # The app is signed as by `scripts/bundle.sh release`. When that is a
 # Developer ID and an App Store Connect API key is given, the app and the
@@ -21,7 +24,7 @@ cd "$(dirname "$0")/.."
 
 app=target/release/Yoinks.app
 scripts/bundle.sh release >/dev/null
-version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+version=$(scripts/version.sh)
 dmg="Yoinks-$version.dmg"
 zip="Yoinks-$version.zip"
 dist=target/dist
@@ -81,3 +84,36 @@ fi
 ditto -c -k --sequesterRsrc --keepParent "$app" "$dist/$zip"
 (cd "$dist" && shasum -a 256 "$dmg" "$zip" > SHA256SUMS.txt)
 cat "$dist/SHA256SUMS.txt"
+
+# Sparkle downloads the zip; the feed lists only this release, with its
+# signature, and is itself signed (the app requires a signed feed).
+# YOINKS_UPDATE_BASE_URL serves a test update from elsewhere.
+if [ -n "${YOINKS_SPARKLE_KEY:-}" ]; then
+    sign_update="$(scripts/sparkle.sh)/bin/sign_update"
+    signature=$("$sign_update" --ed-key-file "$YOINKS_SPARKLE_KEY" -p "$dist/$zip")
+    length=$(stat -f %z "$dist/$zip")
+    date=$(LC_ALL=C date -u "+%a, %d %b %Y %H:%M:%S +0000")
+    repository=https://github.com/houseofmackee/yoinks
+    base=${YOINKS_UPDATE_BASE_URL:-$repository/releases/download/v$version}
+    cat > "$dist/appcast.xml" <<APPCAST
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Yoinks</title>
+    <link>$repository</link>
+    <item>
+      <title>Yoinks $version</title>
+      <pubDate>$date</pubDate>
+      <sparkle:version>$(scripts/version.sh --bundle)</sparkle:version>
+      <sparkle:shortVersionString>$version</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <sparkle:fullReleaseNotesLink>$repository/releases/tag/v$version</sparkle:fullReleaseNotesLink>
+      <description><![CDATA[<p>Yoinks $version is available. See the <a href="$repository/releases/tag/v$version">release notes</a> for what changed.</p>]]></description>
+      <enclosure url="$base/$zip" length="$length" type="application/octet-stream" sparkle:edSignature="$signature"/>
+    </item>
+  </channel>
+</rss>
+APPCAST
+    "$sign_update" --ed-key-file "$YOINKS_SPARKLE_KEY" "$dist/appcast.xml"
+    echo "$dist/appcast.xml"
+fi

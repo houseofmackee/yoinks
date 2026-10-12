@@ -227,6 +227,19 @@ define_class!(
             }
         }
 
+        // ⌘V (Edit > Paste) adds whatever is on the clipboard.
+        #[unsafe(method(paste:))]
+        fn paste(&self, _sender: Option<&AnyObject>) {
+            let added = self
+                .ivars()
+                .model
+                .upgrade()
+                .is_some_and(|model| model.accept_clipboard());
+            if !added {
+                NSBeep();
+            }
+        }
+
         #[unsafe(method(mouseExited:))]
         fn mouse_exited(&self, _event: &NSEvent) {
             self.notify(ViewEvent::Exited);
@@ -589,7 +602,7 @@ impl ShelfContentView {
             mtm,
             "Add Clipboard to Shelf",
             sel!(addClipboard:),
-            "",
+            "v",
             None,
         ));
         menu.addItem(&NSMenuItem::separatorItem(mtm));

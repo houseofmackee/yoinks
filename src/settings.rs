@@ -66,6 +66,11 @@ pub struct Settings {
     pub clipboard_ignored_apps: Vec<String>,
     /// Skip copies that look like passwords, API keys or tokens.
     pub clipboard_skip_secrets: bool,
+    /// Remove unpinned entries this many hours after they were added;
+    /// `null` keeps them until removed.
+    pub shelf_expiry_hours: Option<u32>,
+    /// Add new screenshots and screen recordings to the shelf.
+    pub add_screenshots: bool,
 }
 
 impl Default for Settings {
@@ -83,6 +88,8 @@ impl Default for Settings {
             clipboard_history_size: 50,
             clipboard_ignored_apps: Vec::new(),
             clipboard_skip_secrets: true,
+            shelf_expiry_hours: None,
+            add_screenshots: false,
         }
     }
 }
@@ -126,6 +133,13 @@ impl Settings {
         Shortcut::parse(text)
             .inspect_err(|error| eprintln!("yoinks: ignoring hotkey setting: {error}"))
             .ok()
+    }
+
+    /// How old an unpinned entry may get, if expiry is on.
+    pub fn shelf_max_age(&self) -> Option<std::time::Duration> {
+        self.shelf_expiry_hours
+            .filter(|hours| *hours > 0)
+            .map(|hours| std::time::Duration::from_secs(u64::from(hours) * 3600))
     }
 
     pub fn ignores_app(&self, bundle_id: &str) -> bool {
@@ -183,6 +197,16 @@ mod tests {
             AppearMode::AtEdge,
             "rest still loads"
         );
+    }
+
+    #[test]
+    fn expiry_is_off_unless_set() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.shelf_max_age(), None);
+        settings.shelf_expiry_hours = Some(0);
+        assert_eq!(settings.shelf_max_age(), None, "0 means off too");
+        settings.shelf_expiry_hours = Some(24);
+        assert_eq!(settings.shelf_max_age().unwrap().as_secs(), 86_400);
     }
 
     #[test]

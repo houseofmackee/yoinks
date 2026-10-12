@@ -8,6 +8,7 @@ mod item;
 mod materialize;
 mod menu_button;
 mod model;
+mod ocr;
 mod pasteboard;
 mod promise;
 mod prompt;

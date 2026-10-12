@@ -37,6 +37,13 @@ const APPEAR_MODES: [(AppearMode, &str); 4] = [
     (AppearMode::Off, "Never"),
 ];
 const HISTORY_SIZES: [usize; 5] = [25, 50, 100, 200, 500];
+const EXPIRY: [(Option<u32>, &str); 5] = [
+    (None, "Never"),
+    (Some(1), "After 1 hour"),
+    (Some(24), "After 1 day"),
+    (Some(24 * 7), "After 1 week"),
+    (Some(24 * 30), "After 30 days"),
+];
 
 /// What the window needs from the rest of the app.
 pub struct PreferencesHooks {
@@ -59,6 +66,8 @@ pub struct PrefsIvars {
     window: OnceCell<Retained<NSPanel>>,
     login: OnceCell<Retained<NSButton>>,
     login_note: OnceCell<Retained<NSTextField>>,
+    /// "Check for updates automatically"; Sparkle owns the setting.
+    updates: OnceCell<Retained<NSButton>>,
     recorder: OnceCell<Retained<ShortcutRecorder>>,
     shortcut_note: OnceCell<Retained<NSTextField>>,
     sizes: OnceCell<Retained<NSTextField>>,
@@ -132,6 +141,24 @@ define_class!(
         fn keep_changed(&self, sender: &NSButton) {
             let keep = sender.state() == NSControlStateValueOn;
             self.update(|s| s.keep_after_drag_out = keep);
+        }
+
+        #[unsafe(method(expiryChanged:))]
+        fn expiry_changed(&self, sender: &NSPopUpButton) {
+            if let Some((hours, _)) = usize::try_from(sender.indexOfSelectedItem()).ok().and_then(|i| EXPIRY.get(i)) {
+                self.update(|s| s.shelf_expiry_hours = *hours);
+            }
+        }
+
+        #[unsafe(method(screenshotsChanged:))]
+        fn screenshots_changed(&self, sender: &NSButton) {
+            let on = sender.state() == NSControlStateValueOn;
+            self.update(|s| s.add_screenshots = on);
+        }
+
+        #[unsafe(method(autoUpdatesChanged:))]
+        fn auto_updates_changed(&self, sender: &NSButton) {
+            crate::updates::set_checks_automatically(sender.state() == NSControlStateValueOn);
         }
 
         #[unsafe(method(resetShortcut:))]
@@ -212,6 +239,7 @@ impl PreferencesWindow {
             window: OnceCell::new(),
             login: OnceCell::new(),
             login_note: OnceCell::new(),
+            updates: OnceCell::new(),
             recorder: OnceCell::new(),
             shortcut_note: OnceCell::new(),
             sizes: OnceCell::new(),
@@ -233,6 +261,13 @@ impl PreferencesWindow {
         };
         self.refresh_login(None);
         self.refresh_sizes();
+        if let Some(updates) = self.ivars().updates.get() {
+            updates.setState(if crate::updates::checks_automatically() {
+                NSControlStateValueOn
+            } else {
+                NSControlStateValueOff
+            });
+        }
         if !window.isVisible() {
             window.center();
         }
@@ -523,6 +558,46 @@ impl PreferencesWindow {
             NSControlStateValueOff
         });
 
+        let mut expiry_choices = EXPIRY.to_vec();
+        let custom;
+        if !EXPIRY
+            .iter()
+            .any(|(h, _)| *h == settings.shelf_expiry_hours)
+        {
+            // A value set by hand in settings.json.
+            custom = format!("After {} hours", settings.shelf_expiry_hours.unwrap_or(0));
+            expiry_choices.push((settings.shelf_expiry_hours, custom.as_str()));
+        }
+        let expiry = form::popup(
+            mtm,
+            &expiry_choices.iter().map(|(_, t)| *t).collect::<Vec<_>>(),
+            target,
+            sel!(expiryChanged:),
+        );
+        expiry.selectItemAtIndex(
+            expiry_choices
+                .iter()
+                .position(|(h, _)| *h == settings.shelf_expiry_hours)
+                .unwrap_or(0) as isize,
+        );
+        let screenshots = form::checkbox(
+            mtm,
+            "Add new screenshots to the shelf",
+            target,
+            sel!(screenshotsChanged:),
+        );
+        screenshots.setState(if settings.add_screenshots {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
+        let screenshots_note = note(
+            mtm,
+            "Screenshots and screen recordings saved to the screenshot folder (the Desktop \
+             unless changed in the Screenshot app's Options) appear on the shelf.",
+            NOTE_WIDTH,
+        );
+
         let weak = Weak::new(self);
         let apps = AppList::new(mtm, settings.ignored_apps.clone(), move |ids| {
             if let Some(this) = weak.load() {
@@ -531,7 +606,7 @@ impl PreferencesWindow {
         });
         let apps_view = apps.view(NOTE_WIDTH, 96.0);
 
-        let rows: Vec<Retained<NSView>> = vec![
+        let mut rows: Vec<Retained<NSView>> = vec![
             up(&*row(mtm, "Startup:", &login)),
             up(&*indented(mtm, &login_note)),
             up(&*row(mtm, "Menu bar:", &icon)),
@@ -541,6 +616,9 @@ impl PreferencesWindow {
             up(&*row(mtm, "Auto-hide:", &hide)),
             up(&*indented(mtm, &hide_note)),
             up(&*row(mtm, "After dragging out:", &keep)),
+            up(&*row(mtm, "Remove unpinned items:", &expiry)),
+            up(&*row(mtm, "Screenshots:", &screenshots)),
+            up(&*indented(mtm, &screenshots_note)),
             up(&*row(mtm, "Don't show it for drags from:", &apps_view)),
             up(&*indented(
                 mtm,
@@ -551,6 +629,17 @@ impl PreferencesWindow {
                 ),
             )),
         ];
+        // Only builds with Sparkle (releases) can update themselves.
+        if crate::updates::available() {
+            let updates = form::checkbox(
+                mtm,
+                "Check for updates automatically",
+                target,
+                sel!(autoUpdatesChanged:),
+            );
+            rows.insert(2, up(&*row(mtm, "Updates:", &updates)));
+            let _ = self.ivars().updates.set(updates);
+        }
         let _ = self.ivars().login.set(login);
         let _ = self.ivars().login_note.set(login_note);
         self.ivars().lists.borrow_mut().push(apps);

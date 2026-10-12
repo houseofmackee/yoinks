@@ -16,8 +16,9 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>@VERSION@</string>
+	<!-- Compared by Sparkle: see scripts/version.sh. -->
 	<key>CFBundleVersion</key>
-	<string>@VERSION@</string>
+	<string>@BUNDLE_VERSION@</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<!-- Apple Silicon only. -->

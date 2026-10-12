@@ -119,6 +119,19 @@ impl ShelfStore {
         removed
     }
 
+    /// Removes unpinned entries added before `cutoff` (Unix seconds) and
+    /// returns them. Entries still receiving files are kept.
+    pub fn expire(&mut self, cutoff: u64) -> Vec<Entry> {
+        let (expired, kept): (Vec<Entry>, Vec<Entry>) = std::mem::take(&mut self.entries)
+            .into_iter()
+            .partition(|entry| !entry.pinned && !entry.has_pending() && entry.added_at < cutoff);
+        self.entries = kept;
+        if !expired.is_empty() {
+            self.save();
+        }
+        expired
+    }
+
     pub fn has_unpinned(&self) -> bool {
         self.entries.iter().any(|entry| !entry.pinned)
     }
@@ -310,6 +323,34 @@ mod tests {
         store.insert(pending);
         assert!(!store.unstack(single_id));
         assert!(!store.unstack(pending_id));
+    }
+
+    #[test]
+    fn expire_removes_old_unpinned_entries() {
+        let (mut store, _) = store();
+        let aged = |title: &str, added_at: u64| {
+            let mut entry = Entry::new(vec![file(title)]);
+            entry.added_at = added_at;
+            entry
+        };
+        let pinned = aged("pinned", 100);
+        let pinned_id = pinned.id;
+        store.insert(pinned);
+        store.insert(aged("old", 100));
+        store.insert(aged("new", 900));
+        let mut pending = Entry::new(vec![file("p"), Item::pending()]);
+        pending.added_at = 100;
+        store.insert(pending);
+        assert!(store.set_pinned(pinned_id, true));
+
+        let expired = store.expire(500);
+        assert_eq!(
+            expired.iter().map(Entry::title).collect::<Vec<_>>(),
+            ["old"]
+        );
+        let titles: Vec<_> = store.entries().iter().map(Entry::title).collect();
+        assert_eq!(titles, ["2 items", "new", "pinned"]);
+        assert!(store.expire(500).is_empty());
     }
 
     #[test]

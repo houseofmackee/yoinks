@@ -184,6 +184,11 @@ define_class!(
             });
         }
 
+        #[unsafe(method(copyItemText:))]
+        fn copy_item_text(&self, _sender: Option<&AnyObject>) {
+            self.with_model(|model, id| model.copy_text(id));
+        }
+
         #[unsafe(method(togglePinItem:))]
         fn toggle_pin_item(&self, _sender: Option<&AnyObject>) {
             self.with_model(|model, id| model.toggle_pin(id));
@@ -488,6 +493,7 @@ impl TileView {
             .as_ref()
             .is_some_and(|m| !m.image_paths(id).is_empty())
         {
+            menu.addItem(&item("Copy Text", sel!(copyItemText:), ""));
             let convert = NSMenu::new(mtm);
             for (index, format) in ImageFormat::ALL.iter().enumerate() {
                 let choice = item(format.label(), sel!(convertImage:), "");

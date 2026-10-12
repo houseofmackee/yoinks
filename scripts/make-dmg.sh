@@ -10,7 +10,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 [ -n "${YOINKS_DMG_NO_BUILD:-}" ] || scripts/bundle.sh release >/dev/null
-version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+version=$(scripts/version.sh)
 dmg="target/release/Yoinks-$version.dmg"
 
 staging=$(mktemp -d)

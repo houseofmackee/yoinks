@@ -14,7 +14,8 @@ case "$profile" in
     *) echo "usage: $0 [debug|release]" >&2; exit 2 ;;
 esac
 
-version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+version=$(scripts/version.sh)
+bundle_version=$(scripts/version.sh --bundle)
 app="target/$profile/Yoinks.app"
 
 rm -rf "$app"
@@ -22,7 +23,29 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "target/$profile/yoinks" "$app/Contents/MacOS/yoinks"
 # Regenerate with: swift scripts/make-icon.swift
 cp macos/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
-sed "s/@VERSION@/$version/g" macos/Info.plist > "$app/Contents/Info.plist"
+sed -e "s/@VERSION@/$version/g" -e "s/@BUNDLE_VERSION@/$bundle_version/g" \
+    macos/Info.plist > "$app/Contents/Info.plist"
+
+# Release builds embed Sparkle for updates (YOINKS_NO_SPARKLE=1 skips it),
+# without the XPC services only sandboxed apps use. The feed is the latest
+# release's appcast.xml (scripts/dist.sh writes it), and both the feed and
+# the update must be signed with the key whose public half is below; the
+# private half is the release workflow's SPARKLE_PRIVATE_KEY secret.
+sparkle_public_key="q+IRljJ/ThhIoCIoBDRPGNlGlj8C+7oSAHkUjf5rYRc="
+if [ "$profile" = release ] && [ -z "${YOINKS_NO_SPARKLE:-}" ]; then
+    sparkle=$(scripts/sparkle.sh)
+    framework="$app/Contents/Frameworks/Sparkle.framework"
+    mkdir -p "$app/Contents/Frameworks"
+    ditto "$sparkle/Sparkle.framework" "$framework"
+    rm -rf "$framework/Versions/B/XPCServices" "$framework/XPCServices"
+    cp "$sparkle/LICENSE" "$app/Contents/Resources/Sparkle-LICENSE.txt"
+    plist="$app/Contents/Info.plist"
+    plutil -insert SUFeedURL -string \
+        "https://github.com/houseofmackee/yoinks/releases/latest/download/appcast.xml" "$plist"
+    plutil -insert SUPublicEDKey -string "$sparkle_public_key" "$plist"
+    plutil -insert SURequireSignedFeed -bool YES "$plist"
+    plutil -insert SUVerifyUpdateBeforeExtraction -bool YES "$plist"
+fi
 
 # Debug builds are signed ad hoc. Release builds are signed, in order of
 # preference, with a valid "Developer ID Application" identity (of team
@@ -53,6 +76,13 @@ if [ "$profile" = release ]; then
         "Developer ID"*) timestamp=--timestamp ;;
         *) timestamp=--timestamp=none ;;
     esac
+    # Sparkle's executables first, inside out, with the same identity.
+    framework="$app/Contents/Frameworks/Sparkle.framework"
+    if [ -d "$framework" ]; then
+        for part in "$framework/Versions/B/Autoupdate" "$framework/Versions/B/Updater.app" "$framework"; do
+            codesign --force --options runtime "$timestamp" --sign "$SIGN_IDENTITY" "$part"
+        done
+    fi
     codesign --force --options runtime "$timestamp" --sign "$SIGN_IDENTITY" "$app"
 else
     codesign --force --sign "$SIGN_IDENTITY" "$app"

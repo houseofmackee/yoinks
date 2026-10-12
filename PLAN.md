@@ -29,7 +29,7 @@ Spaces and full-screen apps.
 | Persistence | `serde` + `serde_json` | Stored under `~/Library/Application Support/Yoinks`; `rusqlite` only if history ever outgrows JSON |
 | Global hotkeys | Carbon `RegisterEventHotKey` via FFI | No Accessibility or Input Monitoring permission needed |
 | Logging | `eprintln!` to stderr | `tracing` + `tracing-oslog` (Console.app) remains an option |
-| Bundling | `scripts/bundle.sh` + `macos/Info.plist`, `scripts/make-dmg.sh`, `scripts/dist.sh` | Releases are built, signed with a Developer ID, notarized and published by `.github/workflows/release.yml` |
+| Bundling | `scripts/bundle.sh` + `macos/Info.plist`, `scripts/make-dmg.sh`, `scripts/dist.sh` | Releases are built, signed with a Developer ID, notarized and published by `.github/workflows/release.yml`; Sparkle updates (`scripts/sparkle.sh`, `src/updates.rs`) |
 | Minimum OS | macOS 13 Ventura | Unlocks modern APIs (SMAppService, App Intents) |
 
 ## 3. Architecture
@@ -57,6 +57,7 @@ src/
     recent.rs        recall buffer of dragged-out entries
     actions.rs       quick actions: zip, image convert/resize, rename rules
     prompt.rs        non-activating Rename prompt
+    ocr.rs           Vision text recognition for Copy Text
   drag/
     monitor.rs       shows/hides the shelf for system-wide drags
     tracker.rs       pure drag recognition state machine
@@ -70,6 +71,8 @@ src/
     shortcut.rs      parse "control+option+Y" into Carbon key code + modifiers
     gesture.rs       pure press / long press / double press state machine
     carbon.rs        RegisterEventHotKey registration and dispatch
+  screenshots.rs     watches the screenshot folder for new captures
+  updates.rs         Sparkle, loaded at runtime from release bundles
   settings.rs        typed settings with serde defaults (settings.json)
   preferences/
     window.rs        tabs, actions, live apply
@@ -304,7 +307,7 @@ Key design points:
   available; without one, only the Share extension and Shortcuts actions
   could be tried, ad hoc and on one Mac.
 
-### Phase 10: Packaging and distribution (done except automatic updates)
+### Phase 10: Packaging and distribution (done)
 - [x] Apple Silicon only (decision 2026-10-10): no universal binary.
   `LSArchitecturePriority` is arm64.
 - [x] App icon drawn by `scripts/make-icon.swift` into `macos/AppIcon.icns`
@@ -331,8 +334,19 @@ Key design points:
   notarizes and staples the DMG. The release workflow imports the
   certificate (plus Apple's G2 intermediate) and refuses to publish a DMG
   that fails `stapler validate`. No more "Open Anyway" step.
-- To do after that: automatic updates with Sparkle (EdDSA-signed appcast,
-  hosted on GitHub Releases, published by the release workflow).
+- [x] Automatic updates with Sparkle 2.10 (2026-10-12), as in CleanShotZ:
+  `scripts/sparkle.sh` downloads it at a pinned checksum, `bundle.sh`
+  embeds it in release builds (no XPC services) with the feed URL and
+  public key, signing its executables inside out; `updates.rs` loads it at
+  runtime, so debug builds simply have no Check for Updates…. `dist.sh`
+  writes `appcast.xml` signed with the Yoinks EdDSA key (its own key, not
+  CleanShotZ's; the private half is in the login keychain under account
+  `io.github.yoinks` and in the `SPARKLE_PRIVATE_KEY` secret), and the
+  release workflow attaches it. The feed is read from the latest full
+  release, so pre-releases are never offered. `CFBundleVersion` drops the
+  hyphen and dot (`0.2.0beta2`) because Sparkle treats `0.2.0-beta.1`,
+  `0.2.0-beta.2` and `0.2.0` as equal. Tested end to end with a local
+  feed: offered, downloaded, verified, replaced and relaunched.
 - Swift add-ons (Phase 9b) would be built and embedded here once signing
   exists.
 
@@ -374,11 +388,11 @@ Key design points:
 | Search and filter | Type to filter shelf and clipboard history by name, kind or content | Clipboard history has search; the shelf does not |
 | Quick actions on items | Right-click: rename, compress to zip, convert image format, resize image, copy path, open with | Done (rename is for items Yoinks saved; results are new items) |
 | Text snippet editing | Edit a text clipping inline before dragging it out | To do |
-| Auto-expiry | Optionally remove items older than N hours/days | To do |
-| OCR on images | Use the Vision framework to copy text out of an image or screenshot | To do |
-| Screenshot capture | Optionally watch the screenshot folder and add new screenshots automatically | To do |
-| Keyboard-only workflow | Arrow keys to select, Return to open, ⌘C to copy, Delete to remove, ⌘V to paste into the shelf | Arrows, Return, Delete, Space, Escape and ⌘C done; ⌘V to do |
-| Paste to shelf | ⌘V while the shelf is focused adds the clipboard contents | To do (the shortcut's double press already adds the clipboard) |
+| Auto-expiry | Optionally remove items older than N hours/days | Done: Preferences > General, 1 hour to 30 days; pinned items stay |
+| OCR on images | Use the Vision framework to copy text out of an image or screenshot | Done: right-click > Copy Text |
+| Screenshot capture | Optionally watch the screenshot folder and add new screenshots automatically | Done: Preferences > General; uses the `kMDItemIsScreenCapture` marker, so other files in the folder are ignored |
+| Keyboard-only workflow | Arrow keys to select, Return to open, ⌘C to copy, Delete to remove, ⌘V to paste into the shelf | Done |
+| Paste to shelf | ⌘V while the shelf is focused adds the clipboard contents | Done |
 | Open source CLI + scripting | First-class CLI and JSON output for scripting (`yoinks list --json`) | Done (Phase 9a) |
 | Sensitive content redaction | Detect and skip likely secrets (API keys, tokens) in clipboard history | Done: known key formats, private keys, credential lines and random tokens are skipped (Preferences > Clipboard) |
 | Low-resource mode | Disable thumbnails and polling on battery power | To do |
@@ -402,7 +416,7 @@ Key design points:
 | M2: Yoink parity core | 4, 5, 6 | Auto-appearing shelf, hotkey gestures, previews |
 | M3: Clipboard + settings | 7, 8 | Clipboard history and a full preferences window |
 | M4: Integrations | 9a (9b deferred) | CLI, URL scheme, Services, Continuity Camera |
-| M5: Ship | 10 | Releases built, signed with a Developer ID, notarized and published by GitHub Actions; automatic updates pending |
+| M5: Ship | 10 | Releases built, signed with a Developer ID, notarized and published by GitHub Actions, with Sparkle updates |
 | M6: Beyond Yoink | Section 5 | Selected improvements, prioritized after M5 |
 
 ## 8. Decisions and future options

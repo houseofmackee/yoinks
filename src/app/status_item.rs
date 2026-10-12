@@ -96,6 +96,15 @@ pub fn menu(
         ",",
         target,
     ));
+    // Hidden by the delegate in builds without Sparkle; retitled when a
+    // scheduled check found an update.
+    menu.addItem(&menu_item(
+        mtm,
+        "Check for Updates…",
+        sel!(checkForUpdates:),
+        "",
+        target,
+    ));
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     // No target: `terminate:` travels the responder chain to NSApplication.
     menu.addItem(&menu_item(mtm, "Quit Yoinks", sel!(terminate:), "q", None));

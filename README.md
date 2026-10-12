@@ -26,13 +26,20 @@ Requires macOS 13 or later on Apple Silicon.
 - **Keyboard shortcut** (default ⌃⌥Y): press to show or hide the shelf, hold
   to recall the last item, press twice to add the clipboard.
 - **Quick Look and thumbnails.** Space previews the selected item; arrows,
-  Return, Delete and ⌘C work too.
+  Return, Delete and ⌘C work too, and ⌘V adds the clipboard.
 - **Quick actions.** Right-click a tile for Open With, Copy, Copy Path,
-  Rename (text, links and images Yoinks saved), Compress to zip, and
-  Convert or Resize images. Results land on the shelf as new items; the
-  originals are never changed.
+  Rename (text, links and images Yoinks saved), Compress to zip, Copy Text
+  (recognizes the text in an image), and Convert or Resize images. Results
+  land on the shelf as new items; the originals are never changed.
 - **Pinning.** Pinned items stay on the shelf after you drag them out and
   survive Clear Shelf.
+- **Screenshots and auto-expiry** (both optional): new screenshots and
+  screen recordings appear on the shelf, and unpinned items can be removed
+  after an hour, a day, a week or 30 days.
+- **Automatic updates** through [Sparkle](https://sparkle-project.org):
+  on the second launch Yoinks asks whether to check automatically (once a
+  day); change it later in Preferences > General, or choose Check for
+  Updates… from the menu. Pre-releases are not offered as updates.
 - **Clipboard history** from the menu bar, with search, pins, and privacy
   filters: password managers and content marked as concealed are never
   recorded, and likely passwords, API keys and tokens are skipped (this can
@@ -72,6 +79,8 @@ of the shelf, and opening Yoinks again brings up the shelf.
 | Split a stack | Right-click > Unstack |
 | Keep an item after dragging it out | Right-click > Pin |
 | Copy it, rename it, zip it, convert an image | Right-click > Copy, Rename…, Compress, Convert Image |
+| Get the text out of an image | Right-click > Copy Text |
+| Paste onto the shelf | Click the shelf and press ⌘V |
 | Move the shelf | Drag its background (between or below the tiles) |
 | Put it back at the edge | Menu bar or gear > Move Shelf Back to Edge |
 | Clipboard history | Menu bar (or the shelf's gear) > Clipboard History… (type to search, Return copies) |
@@ -116,7 +125,10 @@ Everything is in `~/Library/Application Support/Yoinks`:
 
 Set `YOINKS_DATA_DIR` to use a different folder (handy for testing).
 
-Nothing leaves your Mac: there is no network access, analytics or account.
+No account, analytics or crash reporting. The only network access is the
+update check, if you allow it: it fetches `appcast.xml` from GitHub
+Releases and sends nothing about your Mac (Sparkle's system profiling is
+off).
 
 ## Building
 
@@ -140,6 +152,18 @@ the self-signed "Yoinks Release" certificate, otherwise ad hoc
 and staples the app and the DMG when `YOINKS_NOTARY_KEY` (the `.p8` path),
 `YOINKS_NOTARY_KEY_ID` and `YOINKS_NOTARY_ISSUER` are set.
 
+Release bundles embed Sparkle 2, downloaded once by `scripts/sparkle.sh` at
+a pinned version and checksum (`YOINKS_NO_SPARKLE=1` leaves it out). With
+`YOINKS_SPARKLE_KEY` (the path to the EdDSA private key) `dist.sh` also
+writes a signed `appcast.xml`, which the app reads from the latest
+release. `CFBundleVersion` is the version without the hyphen and dot
+(`0.2.0beta2` for `0.2.0-beta.2`, see `scripts/version.sh`), because
+Sparkle compares that and would otherwise treat all of 0.2.0's
+pre-releases and 0.2.0 itself as the same version. Back the key up outside
+GitHub: without it, installed copies can't verify new updates. To try an
+update locally, run a release build with `YOINKS_UPDATE_TEST=1` and
+`YOINKS_FEED_URL` pointing at a test feed signed with the same key.
+
 GitHub Actions runs `cargo fmt --check`, `cargo clippy -D warnings` (debug and
 release), `cargo test`, a release bundle build and `cargo deny check` (see
 `deny.toml`) on every push to master and every pull request.
@@ -157,12 +181,20 @@ git tag v0.2.0 && git push origin master v0.2.0
 with the Developer ID Application certificate from the repository secrets
 `DEVELOPER_ID_P12_BASE64` and `DEVELOPER_ID_P12_PASSWORD`, notarizes with
 the App Store Connect API key in `NOTARY_API_KEY_BASE64` (and the
-`APPLE_TEAM_ID`, `NOTARY_KEY_ID` and `NOTARY_ISSUER_ID` variables), runs
-`scripts/dist.sh` and publishes the DMG, zip and `SHA256SUMS.txt`. Keep
-backups of the `.p12` and `.p8` outside GitHub. Tags with a hyphen (`v0.2.0-beta.1`) become
-pre-releases. Do not create releases by hand with `gh release create`.
+`APPLE_TEAM_ID`, `NOTARY_KEY_ID` and `NOTARY_ISSUER_ID` variables), signs
+the update feed with `SPARKLE_PRIVATE_KEY`, runs `scripts/dist.sh` and
+publishes the DMG, zip, `SHA256SUMS.txt` and `appcast.xml`. Keep backups
+of the `.p12`, `.p8` and Sparkle key outside GitHub. Tags with a hyphen
+(`v0.2.0-beta.1`) become pre-releases; installed copies only update to
+full releases, because the feed is read from the latest one. Do not create
+releases by hand with `gh release create`.
 
 ## Status
 
-See [PLAN.md](PLAN.md) for the roadmap. Still to do: automatic updates and
-optional Swift add-ons (Share extension, Shortcuts actions, widget).
+See [PLAN.md](PLAN.md) for the roadmap. Still to do: optional Swift add-ons
+(Share extension, Shortcuts actions, widget), named shelves, shelf search
+and text editing.
+
+Release builds include [Sparkle](https://sparkle-project.org) for updates,
+under its own MIT-style license; the notice ships in the app as
+`Contents/Resources/Sparkle-LICENSE.txt`.

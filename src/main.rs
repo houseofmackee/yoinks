@@ -13,9 +13,11 @@ mod hotkey;
 mod ipc;
 mod paths;
 mod preferences;
+mod screenshots;
 mod settings;
 mod shelf;
 mod ui;
+mod updates;
 
 use objc2::MainThreadMarker;
 use objc2::runtime::ProtocolObject;
