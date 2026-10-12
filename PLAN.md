@@ -40,6 +40,7 @@ src/
   app/
     delegate.rs      NSApplicationDelegate (launch, reopen, terminate)
     status_item.rs   menu bar icon and menu
+    status_drop.rs   drops onto the menu bar icon
   shelf/
     window.rs        NSPanel subclass: borderless, floating, non-activating
     geometry.rs      pure layout math for the panel
@@ -452,8 +453,8 @@ Key design points:
 | Open source CLI + scripting | First-class CLI and JSON output for scripting (`yoinks list --json`) | Done (Phase 9a) |
 | Share menu | Send items with AirDrop, Mail, Messages and other share services | Done: right-click > Share (services listed directly; the share picker popover needs an active app) |
 | Shake to show | Shake the pointer mid-drag to bring up the shelf (as in Dropover) | Done: a choice under "Show the shelf during drags" |
-| Reorder tiles | Drag a tile up or down within the shelf | To do |
-| Drop on the menu bar icon | Drop items on the menu bar icon (or the notch area) to add them | To do |
+| Reorder tiles | Drag a tile up or down within the shelf | Done: within Yoinks a tile drag is a move; the shelf shows an insertion line and moves the entry |
+| Drop on the menu bar icon | Drop items on the menu bar icon (or the notch area) to add them | Done for the menu bar icon (its window is registered for drags; `src/app/status_drop.rs`); the notch area is not |
 | Sensitive content redaction | Detect and skip likely secrets (API keys, tokens) in clipboard history | Done: known key formats, private keys, credential lines and random tokens are skipped (Preferences > Clipboard) |
 | Low-resource mode | Disable thumbnails and polling on battery power | Done: "Save energy on battery" (Preferences > General) slows clipboard and screenshot polling and skips new thumbnails on battery or in Low Power Mode |
 
@@ -509,10 +510,9 @@ Key design points:
   team and can only be tried from an installed, signed build.
 - Text snippet editing: edit a text clipping in place before dragging it
   out.
-- Ideas from the comparison with Dropover, Droppy and Dropzone:
-  reordering tiles by dragging them within the shelf; the menu bar icon
-  (or the notch area) as a drop target; custom actions on items (partly
-  covered by the Shortcuts actions and the command line).
+- Ideas from the comparison with Dropover, Droppy and Dropzone: the
+  notch area as a drop target; custom actions on items (partly covered by
+  the Shortcuts actions and the command line).
 
 **Testing**
 - Integration tests for the CLI and IPC socket.

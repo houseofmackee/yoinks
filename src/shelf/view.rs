@@ -93,6 +93,11 @@ pub struct ContentIvars {
     query: RefCell<Option<Query>>,
     /// The shelf's name, shown at the top when there are several shelves.
     title: Retained<NSTextField>,
+    /// Where a tile being reordered would go.
+    insertion: Retained<NSView>,
+    /// The entry just reordered within the shelf, until its tile's drag
+    /// session ends.
+    reordered: Cell<Option<Uuid>>,
     /// A wash of the shelf's tag color behind everything else.
     tint: Retained<NSView>,
     /// Holds the name and the search field; stack views drop hidden views.
@@ -115,6 +120,11 @@ define_class!(
     impl ShelfContentView {
         #[unsafe(method(draggingEntered:))]
         fn dragging_entered(&self, info: &ProtocolObject<dyn NSDraggingInfo>) -> NSDragOperation {
+            if self.own_tile(info).is_some() {
+                // One of our tiles: a reorder, shown by the insertion line.
+                self.show_insertion(info);
+                return NSDragOperation::Move;
+            }
             let operation = drop_operation(info);
             self.set_highlighted(operation != NSDragOperation::None);
             operation
@@ -122,26 +132,43 @@ define_class!(
 
         #[unsafe(method(draggingUpdated:))]
         fn dragging_updated(&self, info: &ProtocolObject<dyn NSDraggingInfo>) -> NSDragOperation {
+            if self.own_tile(info).is_some() {
+                self.show_insertion(info);
+                return NSDragOperation::Move;
+            }
             drop_operation(info)
         }
 
         #[unsafe(method(draggingExited:))]
         fn dragging_exited(&self, _info: Option<&ProtocolObject<dyn NSDraggingInfo>>) {
             self.set_highlighted(false);
+            self.ivars().insertion.setHidden(true);
         }
 
         #[unsafe(method(performDragOperation:))]
         fn perform_drag_operation(&self, info: &ProtocolObject<dyn NSDraggingInfo>) -> bool {
             self.set_highlighted(false);
-            let dropped = pasteboard::read(&info.draggingPasteboard());
-            let accepted = match self.ivars().model.upgrade() {
-                Some(model) => model.accept(dropped),
-                None => false,
-            };
-            if accepted {
-                self.notify(ViewEvent::Used);
+            self.ivars().insertion.setHidden(true);
+            if let Some(id) = self.own_tile(info) {
+                let before = self.insertion_point(info);
+                // The tile's drag session ends after this; it asks
+                // `take_reordered` so it doesn't count as a drag out.
+                self.ivars().reordered.set(Some(id));
+                if let Some(model) = self.ivars().model.upgrade() {
+                    model.move_entry(id, before);
+                }
+                true
+            } else {
+                let dropped = pasteboard::read(&info.draggingPasteboard());
+                let accepted = match self.ivars().model.upgrade() {
+                    Some(model) => model.accept(dropped),
+                    None => false,
+                };
+                if accepted {
+                    self.notify(ViewEvent::Used);
+                }
+                accepted
             }
-            accepted
         }
     }
 
@@ -506,6 +533,8 @@ impl ShelfContentView {
             query: RefCell::new(None),
             title,
             tint: NSView::new(mtm),
+            insertion: NSView::new(mtm),
+            reordered: Cell::new(None),
             header,
             scroll_top: OnceCell::new(),
         });
@@ -560,6 +589,13 @@ impl ShelfContentView {
         self.addSubview(&ivars.placeholder);
         self.addSubview(&ivars.menu_button);
         self.addSubview(&ivars.header);
+        ivars.insertion.setWantsLayer(true);
+        ivars.insertion.setHidden(true);
+        if let Some(layer) = ivars.insertion.layer() {
+            layer.setBackgroundColor(Some(&NSColor::controlAccentColor().CGColor()));
+            layer.setCornerRadius(1.5);
+        }
+        self.addSubview(&ivars.insertion);
         // SAFETY: Actions take one sender argument; we outlive the field.
         unsafe {
             ivars.search.setTarget(Some(self.as_ref()));
@@ -776,6 +812,62 @@ impl ShelfContentView {
         import.setIdentifier(Some(unsafe { NSMenuItemImportFromDeviceIdentifier }));
         menu.addItem(&import);
         menu
+    }
+
+    /// The entry whose tile from this shelf is being dragged, if that is
+    /// what the drag is.
+    fn own_tile(&self, info: &ProtocolObject<dyn NSDraggingInfo>) -> Option<Uuid> {
+        let tile = info.draggingSource()?.downcast::<TileView>().ok()?;
+        let id = tile.entry_id();
+        self.ivars().order.borrow().contains(&id).then_some(id)
+    }
+
+    /// The entry a dropped tile goes in front of (`None`: at the end), from
+    /// where the pointer is relative to the tiles' middles.
+    fn insertion_point(&self, info: &ProtocolObject<dyn NSDraggingInfo>) -> Option<Uuid> {
+        let y = info.draggingLocation().y;
+        self.tiles()
+            .into_iter()
+            .find(|tile| {
+                let frame = tile.convertRect_toView(tile.bounds(), None);
+                y > frame.origin.y + frame.size.height / 2.0
+            })
+            .map(|tile| tile.entry_id())
+    }
+
+    /// Puts the insertion line where a dragged tile would land.
+    fn show_insertion(&self, info: &ProtocolObject<dyn NSDraggingInfo>) {
+        let before = self.insertion_point(info);
+        let tiles = self.tiles();
+        // In window coordinates: the top of the tile it goes before, or the
+        // bottom of the last tile.
+        let y = match before.and_then(|id| tiles.iter().find(|t| t.entry_id() == id)) {
+            Some(tile) => {
+                let frame = tile.convertRect_toView(tile.bounds(), None);
+                frame.origin.y + frame.size.height + 2.0
+            }
+            None => match tiles.last() {
+                Some(tile) => tile.convertRect_toView(tile.bounds(), None).origin.y - 2.0,
+                None => return,
+            },
+        };
+        let local = self.convertPoint_fromView(NSPoint::new(0.0, y), None);
+        let insertion = &self.ivars().insertion;
+        insertion.setFrame(NSRect::new(
+            NSPoint::new(10.0, local.y - 1.5),
+            NSSize::new(self.bounds().size.width - 20.0, 3.0),
+        ));
+        insertion.setHidden(false);
+    }
+
+    /// True (once) if `id` was just reordered within the shelf, so its
+    /// tile's drag doesn't count as a drag out.
+    pub fn take_reordered(&self, id: Uuid) -> bool {
+        if self.ivars().reordered.get() == Some(id) {
+            self.ivars().reordered.set(None);
+            return true;
+        }
+        false
     }
 
     /// Shows the search field with `text` in it and puts the cursor there.

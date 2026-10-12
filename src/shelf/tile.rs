@@ -225,8 +225,8 @@ define_class!(
     unsafe impl NSDraggingSource for TileView {
         // Offer everything Finder understands and let it apply its usual
         // rules: move on the same volume, copy across volumes, Option to
-        // copy, Command to move, Option-Command to make an alias. Dropping
-        // back onto the shelf itself is refused.
+        // copy, Command to move, Option-Command to make an alias. Within
+        // Yoinks a drag is a move: dropped on the shelf, it reorders.
         #[unsafe(method(draggingSession:sourceOperationMaskForDraggingContext:))]
         fn source_operation_mask(
             &self,
@@ -234,7 +234,7 @@ define_class!(
             context: NSDraggingContext,
         ) -> NSDragOperation {
             if context == NSDraggingContext::WithinApplication {
-                NSDragOperation::None
+                NSDragOperation::Move
             } else {
                 NSDragOperation::Copy
                     | NSDragOperation::Move
@@ -251,7 +251,12 @@ define_class!(
             operation: NSDragOperation,
         ) {
             self.ivars().dragging.set(false);
-            if operation != NSDragOperation::None {
+            let reordered = self
+                .ivars()
+                .model
+                .upgrade()
+                .is_some_and(|model| model.view().take_reordered(self.ivars().entry_id));
+            if operation != NSDragOperation::None && !reordered {
                 // Removing the entry takes this tile out of the view
                 // hierarchy; keep it alive until this method returns.
                 let _alive = self.retain();

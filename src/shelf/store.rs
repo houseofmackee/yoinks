@@ -132,6 +132,27 @@ impl ShelfStore {
         expired
     }
 
+    /// Moves an entry to just before `before` (to the end if `None`).
+    /// Returns false if nothing moved.
+    pub fn move_before(&mut self, id: Uuid, before: Option<Uuid>) -> bool {
+        if before == Some(id) {
+            return false;
+        }
+        let Some(from) = self.entries.iter().position(|entry| entry.id == id) else {
+            return false;
+        };
+        let entry = self.entries.remove(from);
+        let to = before
+            .and_then(|before| self.entries.iter().position(|entry| entry.id == before))
+            .unwrap_or(self.entries.len());
+        let moved = to != from;
+        self.entries.insert(to, entry);
+        if moved {
+            self.save();
+        }
+        moved
+    }
+
     pub fn has_unpinned(&self) -> bool {
         self.entries.iter().any(|entry| !entry.pinned)
     }
@@ -351,6 +372,34 @@ mod tests {
         let titles: Vec<_> = store.entries().iter().map(Entry::title).collect();
         assert_eq!(titles, ["2 items", "new", "pinned"]);
         assert!(store.expire(500).is_empty());
+    }
+
+    #[test]
+    fn move_before_reorders() {
+        let (mut store, _) = store();
+        let ids: Vec<Uuid> = ["d", "c", "b", "a"]
+            .iter()
+            .map(|title| {
+                let entry = Entry::new(vec![file(title)]);
+                let id = entry.id;
+                store.insert(entry);
+                id
+            })
+            .collect();
+        let titles =
+            |store: &ShelfStore| store.entries().iter().map(Entry::title).collect::<Vec<_>>();
+        assert_eq!(titles(&store), ["a", "b", "c", "d"]);
+        let (d, c, _b, a) = (ids[0], ids[1], ids[2], ids[3]);
+
+        assert!(store.move_before(d, Some(a)), "to the top");
+        assert_eq!(titles(&store), ["d", "a", "b", "c"]);
+        assert!(store.move_before(d, None), "to the end");
+        assert_eq!(titles(&store), ["a", "b", "c", "d"]);
+        assert!(store.move_before(a, Some(c)), "down, before c");
+        assert_eq!(titles(&store), ["b", "a", "c", "d"]);
+        assert!(!store.move_before(a, Some(c)), "already there");
+        assert!(!store.move_before(c, Some(c)), "before itself");
+        assert!(!store.move_before(Uuid::new_v4(), None), "no such entry");
     }
 
     #[test]

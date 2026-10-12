@@ -19,6 +19,7 @@ use objc2_foundation::{
     MainThreadMarker, NSArray, NSNotification, NSPoint, NSString, NSTimer, NSURL, ns_string,
 };
 
+use super::status_drop::StatusDrop;
 use super::{commands, status_item};
 use crate::clipboard::{ClipboardHistory, HistoryList};
 use crate::drag::DragMonitor;
@@ -40,6 +41,8 @@ pub struct Ivars {
     settings: RefCell<Settings>,
     shelf: OnceCell<Rc<Shelf>>,
     status_item: OnceCell<Retained<NSStatusItem>>,
+    /// Makes the menu bar icon a drop target.
+    status_drop: OnceCell<Retained<StatusDrop>>,
     drag_monitor: OnceCell<Rc<DragMonitor>>,
     hotkey: RefCell<Option<Rc<HotKey>>>,
     clipboard: OnceCell<Rc<ClipboardHistory>>,
@@ -133,6 +136,21 @@ define_class!(
                     &self.shelf().model().shelves(),
                     show_icon,
                 ));
+            // Dropping on the menu bar icon adds to the shelf.
+            if let Some(item) = ivars.status_item.get() {
+                let shelf = Rc::clone(self.shelf());
+                let drop = StatusDrop::install(mtm, item, move |pasteboard| {
+                    let added = shelf.model().accept(read_pasteboard(pasteboard));
+                    if added {
+                        shelf.appear_at_edge();
+                        shelf.arm_auto_hide(HIDE_AFTER_ADD);
+                    }
+                    added
+                });
+                if let Some(drop) = drop {
+                    let _ = ivars.status_drop.set(drop);
+                }
+            }
             // Remember where the user drags the shelf.
             let mover = objc2::rc::Weak::new(self);
             self.shelf().set_on_moved(move |origin| {

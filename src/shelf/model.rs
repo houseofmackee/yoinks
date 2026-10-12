@@ -650,6 +650,13 @@ impl ShelfModel {
         }
     }
 
+    /// Moves an entry to just before `before` (to the end if `None`).
+    pub fn move_entry(&self, id: Uuid, before: Option<Uuid>) {
+        if self.store.borrow_mut().move_before(id, before) {
+            self.reload();
+        }
+    }
+
     pub fn unstack(&self, id: Uuid) {
         if self.store.borrow_mut().unstack(id) {
             self.reload();

@@ -36,8 +36,8 @@ Free and open source. Requires macOS 13 or later on Apple silicon.
   typing on the shelf, or press ⌘F.
 - **Pinning.** Pinned items stay after you drag them out and survive Clear
   Shelf. Unpinned items can also expire after an hour to 30 days.
-- **Put it anywhere.** Drag the shelf by its background to move it; "Move
-  Shelf Back to Edge" undoes it.
+- **Arrange it.** Drag tiles up or down to reorder them. Drag the shelf by
+  its background to move it; "Move Shelf Back to Edge" undoes it.
 
 **Doing things with items**
 
@@ -53,7 +53,8 @@ Free and open source. Requires macOS 13 or later on Apple silicon.
 
 **Getting things onto the shelf**
 
-- **From anywhere:** "Yoinks" in other apps' Share menus, "Add to Yoinks" in
+- **From anywhere:** drop onto the menu bar icon, "Yoinks" in other apps'
+  Share menus, "Add to Yoinks" in
   the Services menu and Finder's Quick Actions, Shortcuts actions, the
   `yoinks` command and `yoinks://` links.
 - **Automatically,** if you like: new screenshots and screen recordings, and
@@ -116,7 +117,8 @@ updates.
 
 | To | Do |
 | --- | --- |
-| Put something on the shelf | Drag it to the shelf, share it to Yoinks, or press ⌃⌥Y twice to add the clipboard |
+| Put something on the shelf | Drag it to the shelf or onto the menu bar icon, share it to Yoinks, or press ⌃⌥Y twice to add the clipboard |
+| Reorder the shelf | Drag a tile up or down |
 | Take it off | Drag it out, or right-click > Remove |
 | Show or hide the shelf | ⌃⌥Y, the menu bar icon, or Escape |
 | Bring back what you dragged out | Hold ⌃⌥Y, or menu bar > Recall Last Dragged Item |

@@ -7,6 +7,13 @@ shown in the update window and on its GitHub release.
 
 ## [Unreleased]
 
+### Added
+
+- Reorder the shelf: drag a tile up or down; a line shows where it will
+  go.
+- Drop onto the menu bar icon to add to the shelf, without waiting for the
+  shelf to appear.
+
 ## [0.5.0] (2026-10-12)
 
 ### Added
