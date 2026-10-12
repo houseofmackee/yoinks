@@ -10,7 +10,9 @@ sha256=c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c
 
 base=target/sparkle
 dir="$base/$version"
-if [ ! -d "$dir/Sparkle.framework" ]; then
+# A cached copy (CI restores target/) may have lost files; fetch it again.
+if [ ! -d "$dir/Sparkle.framework" ] || [ ! -f "$dir/LICENSE" ] || [ ! -x "$dir/bin/sign_update" ]; then
+    rm -rf "$dir"
     mkdir -p "$base"
     archive="$base/Sparkle-$version.tar.xz"
     curl -sSfL -o "$archive" \

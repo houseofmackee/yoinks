@@ -11,7 +11,9 @@ env:
 jobs:
   check:
     # Apple Silicon runner; Yoinks supports Apple Silicon only.
-    runs-on: macos-14
+    # The same image as the release workflow, so CI checks the toolchain
+    # releases are built with (Swift, the App Intents metadata processor).
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable

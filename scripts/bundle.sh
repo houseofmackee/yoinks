@@ -57,6 +57,7 @@ if [ -f "$intents/sources.txt" ] && xcrun --find appintentsmetadataprocessor >/d
         --output "$app/Contents/Resources" \
         --toolchain-dir "$toolchain" \
         --module-name YoinksIntents \
+        --binary-file "$app/Contents/MacOS/yoinks" \
         --sdk-root "$(xcrun --show-sdk-path --sdk macosx)" \
         --xcode-version "${xcode_build:-0}" \
         --platform-family macOS \

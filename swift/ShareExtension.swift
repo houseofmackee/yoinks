@@ -36,7 +36,9 @@ final class ShareViewController: NSViewController {
     }
 }
 
-/// What was shared, gathered into as few requests as possible.
+/// What was shared, gathered into as few requests as possible. Item
+/// providers stay on the main actor; only their results cross over.
+@MainActor
 private struct Shared {
     var paths: [String] = []
     var links: [(url: String, title: String?)] = []
@@ -93,6 +95,7 @@ private struct Shared {
     }
 }
 
+@MainActor
 private func loadURL(_ provider: NSItemProvider, _ type: UTType) async -> URL? {
     await withCheckedContinuation { continuation in
         provider.loadItem(forTypeIdentifier: type.identifier) { item, _ in
@@ -106,6 +109,7 @@ private func loadURL(_ provider: NSItemProvider, _ type: UTType) async -> URL? {
     }
 }
 
+@MainActor
 private func loadText(_ provider: NSItemProvider) async -> String? {
     await withCheckedContinuation { continuation in
         provider.loadItem(forTypeIdentifier: UTType.plainText.identifier) { item, _ in
@@ -120,6 +124,7 @@ private func loadText(_ provider: NSItemProvider) async -> String? {
 }
 
 /// Writes a shared image into this extension's temporary folder.
+@MainActor
 private func saveImage(_ provider: NSItemProvider) async -> String? {
     let type = provider.registeredContentTypes.first { $0.conforms(to: .image) } ?? .png
     let name = (provider.suggestedName ?? "Image") + "." + (type.preferredFilenameExtension ?? "png")
