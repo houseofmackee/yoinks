@@ -386,6 +386,10 @@ Key design points:
   preferences tab. The first real update over GitHub: the installed 0.3.0
   offered 0.4.0 with its changelog notes, then downloaded, verified,
   installed and relaunched it; the result is still notarized.
+- [x] v0.6.0 (2026-10-12): reorder tiles by dragging, drop onto the menu
+  bar icon, and the notch as an optional drop target, with README
+  screenshots of both. The installed 0.5.0 updated to it through Sparkle;
+  the cask followed automatically.
 - [x] v0.5.0 (2026-10-12): named shelves with color tags, Share, shake to
   show, watched folders, the Share extension and Shortcuts actions. The
   release workflow updated the Homebrew cask by itself for the first time,
@@ -494,7 +498,7 @@ Key design points:
   behind a trait so a sync backend (iCloud via CloudKit, or a shared folder)
   can be added later without reworking the model.
 
-## 9. What's left (as of v0.5.0, 2026-10-12)
+## 9. What's left (as of v0.6.0, 2026-10-12)
 
 **Check on the installed app**
 - The Shortcuts actions in the Shortcuts app, and the App Shortcuts
@@ -505,6 +509,12 @@ Key design points:
 - Shake to show with a real drag (the detection has unit tests only).
 - Save energy on battery while actually on battery (only the power
   source reading and the tick skipping are tested).
+- The notch drop with a real drag, and with the built-in display next to
+  (or not the main) external display: the side areas beside the notch
+  are assumed to be in global screen coordinates, which could only be
+  checked with the built-in display as the main one.
+- Reordering while a search filters the shelf (the drop goes before the
+  visible tile under the pointer; only the unfiltered case was tried).
 
 **Features**
 - The widget (recent shelf items or clips). Needs an App Group with the
