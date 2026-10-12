@@ -57,6 +57,19 @@ Requires macOS 13 or later on Apple Silicon.
 
 ## Install
 
+With [Homebrew](https://brew.sh):
+
+```sh
+brew install --cask houseofmackee/tap/yoinks
+```
+
+This also links the `yoinks` command. Yoinks updates itself, so
+`brew upgrade` leaves it alone (`brew upgrade --cask --greedy yoinks`
+updates it through Homebrew instead), and `brew uninstall --zap --cask
+yoinks` also removes its shelf, history and settings.
+
+Or by hand:
+
 1. Download `Yoinks-<version>.dmg` from
    [Releases](https://github.com/houseofmackee/yoinks/releases) (the current
    release is
@@ -194,7 +207,10 @@ the App Store Connect API key in `NOTARY_API_KEY_BASE64` (and the
 the update feed with `SPARKLE_PRIVATE_KEY`, uses the version's
 `CHANGELOG.md` section (`scripts/release-notes.py`) as the notes in the
 update window and on the GitHub release, runs `scripts/dist.sh` and
-publishes the DMG, zip, `SHA256SUMS.txt` and `appcast.xml`. Keep backups
+publishes the DMG, zip, `SHA256SUMS.txt` and `appcast.xml`, and (for full
+releases) updates the cask in
+[houseofmackee/homebrew-tap](https://github.com/houseofmackee/homebrew-tap)
+with the `TAP_DEPLOY_KEY` deploy key. Keep backups
 of the `.p12`, `.p8` and Sparkle key outside GitHub. Tags with a hyphen
 (`v0.2.0-beta.1`) become pre-releases; installed copies only update to
 full releases, because the feed is read from the latest one. Do not create

@@ -350,6 +350,11 @@ Key design points:
 - [x] v0.3.0 (2026-10-12): the first full release that is Developer ID
   signed, notarized and carries Sparkle, with its `appcast.xml` as the
   update feed. Installed in /Applications from the release DMG.
+- [x] Homebrew cask (2026-10-12): `Casks/yoinks.rb` in
+  `houseofmackee/homebrew-tap` (app, `yoinks` binary, `auto_updates`,
+  zap of the data folder and preferences). The release workflow updates
+  its version and checksum for full releases, pushing with the write
+  deploy key in `TAP_DEPLOY_KEY`, as CleanShotZ does.
 - [x] v0.4.0 (2026-10-12): shelf search, energy saving and the Shelf
   preferences tab. The first real update over GitHub: the installed 0.3.0
   offered 0.4.0 with its changelog notes, then downloaded, verified,
@@ -463,10 +468,6 @@ Key design points:
 - Share extension, Shortcuts actions (App Intents) and a widget, in a
   small Xcode project embedded by `bundle.sh` and signed like the rest.
   The widget also needs an App Group.
-
-**Release and distribution**
-- Homebrew cask in `houseofmackee/homebrew-tap`, updated by the release
-  workflow with a deploy key (the CleanShotZ `TAP_DEPLOY_KEY` pattern).
 
 **Testing**
 - Integration tests for the CLI and IPC socket.
