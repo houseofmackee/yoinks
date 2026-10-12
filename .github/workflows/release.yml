@@ -101,9 +101,8 @@ jobs:
             echo "::error::the APPLE_TEAM_ID, NOTARY_KEY_ID and NOTARY_ISSUER_ID variables must be set"
             exit 1
           fi
+          # dist.sh fails if the DMG is not notarized and stapled.
           scripts/dist.sh
-          # Fail rather than publish anything Gatekeeper would block.
-          xcrun stapler validate "target/dist/Yoinks-${GITHUB_REF_NAME#v}.dmg"
           test -s target/dist/appcast.xml
 
       - name: Publish the release

@@ -42,6 +42,20 @@ if [ -n "$identity" ]; then
     fi
 fi
 
+# Stapling and validating fetch the ticket from Apple, and CI runners
+# sometimes lose that connection: try a few times.
+retry() {
+    attempt=1
+    until "$@"; do
+        if [ "$attempt" -ge 5 ]; then
+            return 1
+        fi
+        echo "retrying in 15 s: $*" >&2
+        sleep 15
+        attempt=$((attempt + 1))
+    done
+}
+
 # Submits a zip or DMG to Apple and waits; on rejection prints Apple's log
 # and fails.
 notarize() {
@@ -66,7 +80,7 @@ if [ -n "$notarize" ]; then
     ditto -c -k --keepParent "$app" "$dist/notarize.zip"
     notarize "$dist/notarize.zip"
     rm "$dist/notarize.zip"
-    xcrun stapler staple "$app"
+    retry xcrun stapler staple "$app"
 fi
 
 YOINKS_DMG_NO_BUILD=1 scripts/make-dmg.sh >/dev/null
@@ -76,8 +90,9 @@ if [ -n "$identity" ]; then
 fi
 if [ -n "$notarize" ]; then
     notarize "$dist/$dmg"
-    xcrun stapler staple "$dist/$dmg"
-    xcrun stapler validate "$dist/$dmg"
+    retry xcrun stapler staple "$dist/$dmg"
+    # Fail rather than publish anything Gatekeeper would block.
+    retry xcrun stapler validate "$dist/$dmg"
     spctl --assess --type execute "$app"
 fi
 
