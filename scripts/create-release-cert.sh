@@ -1,11 +1,11 @@
 #!/bin/sh
 # Creates the self-signed release signing identity, imports it into the
-# login keychain (so local release builds match CI), and exports it to
-# target/release-cert.
+# login keychain, and exports it to target/release-cert for a backup.
 #
-# Releases after 0.2.0-beta.1 are signed with a Developer ID instead; this
-# certificate remains for release builds on a Mac without an Apple
-# developer account (scripts/bundle.sh falls back to it).
+# Releases after 0.2.0-beta.1 are signed with a Developer ID instead, and
+# the release workflow no longer uses this certificate. It remains for
+# release builds on a Mac without an Apple developer account
+# (scripts/bundle.sh falls back to it).
 #
 # Run once per project, ever: every release must be signed with the same
 # certificate, because macOS ties permissions (Accessibility, Screen
@@ -18,7 +18,7 @@ FILE=Yoinks-Release
 
 if security find-identity -p codesigning | grep -q "\"$NAME\""; then
     echo "error: \"$NAME\" is already in the keychain. A new one would change every" >&2
-    echo "release's signature. To get its .p12 for the release workflow, export it from" >&2
+    echo "build's signature. To get its .p12 for a backup, export it from" >&2
     echo "Keychain Access (My Certificates > right-click \"$NAME\" > Export) instead." >&2
     exit 1
 fi
@@ -54,21 +54,16 @@ security import "$WORK/id.p12" -k "$HOME/Library/Keychains/login.keychain-db" \
     -P "$PASSWORD" -T /usr/bin/codesign
 
 cp "$WORK/id.p12" "$OUT/$FILE.p12"
-base64 -i "$WORK/id.p12" > "$OUT/$FILE.p12.base64"
 printf %s "$PASSWORD" > "$OUT/password.txt"
 
 cat <<EOF
 Created "$NAME" in the login keychain and exported it to $OUT:
 
-  $FILE.p12         the certificate and private key
-  $FILE.p12.base64  for the RELEASE_CERT_P12_BASE64 secret
-  password.txt      for the RELEASE_CERT_PASSWORD secret
+  $FILE.p12      the certificate and private key
+  password.txt   its password
 
-1. Add both secrets to the GitHub repository:
-     gh secret set RELEASE_CERT_P12_BASE64 < $OUT/$FILE.p12.base64
-     gh secret set RELEASE_CERT_PASSWORD < $OUT/password.txt
-2. Back up $FILE.p12 and its password somewhere safe outside GitHub (a
-   password manager). Losing them means a new certificate, which makes every
-   user grant permissions again.
-3. Delete $OUT afterwards.
+1. Back up $FILE.p12 and its password somewhere safe (a password
+   manager). Losing them means a new certificate, which changes the
+   signature of builds made with it.
+2. Delete $OUT afterwards.
 EOF
