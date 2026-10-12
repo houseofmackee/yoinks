@@ -73,10 +73,11 @@ src/
     gesture.rs       pure press / long press / double press state machine
     carbon.rs        RegisterEventHotKey registration and dispatch
   screenshots.rs     watches the screenshot folder for new captures
+  power.rs           energy saving on battery or in Low Power Mode
   updates.rs         Sparkle, loaded at runtime from release bundles
   settings.rs        typed settings with serde defaults (settings.json)
   preferences/
-    window.rs        tabs, actions, live apply
+    window.rs        tabs (General, Shelf, Shortcut, Clipboard, Storage)
     recorder.rs      shortcut recorder button
     app_list.rs      editable app list (+ from running apps)
     form.rs          layout helpers
@@ -410,7 +411,7 @@ Key design points:
 | Paste to shelf | ⌘V while the shelf is focused adds the clipboard contents | Done |
 | Open source CLI + scripting | First-class CLI and JSON output for scripting (`yoinks list --json`) | Done (Phase 9a) |
 | Sensitive content redaction | Detect and skip likely secrets (API keys, tokens) in clipboard history | Done: known key formats, private keys, credential lines and random tokens are skipped (Preferences > Clipboard) |
-| Low-resource mode | Disable thumbnails and polling on battery power | To do |
+| Low-resource mode | Disable thumbnails and polling on battery power | Done: "Save energy on battery" (Preferences > General) slows clipboard and screenshot polling and skips new thumbnails on battery or in Low Power Mode |
 
 ## 6. Testing strategy
 
@@ -453,8 +454,6 @@ Key design points:
 - Multiple named shelves, each persisted separately, with a switcher.
 - Text snippet editing: edit a text clipping in place before dragging it
   out.
-- Low-resource mode: skip thumbnails and slow clipboard and screenshot
-  polling on battery.
 
 **Swift add-ons (Phase 9b), now unblocked by the Developer ID**
 - Share extension, Shortcuts actions (App Intents) and a widget, in a

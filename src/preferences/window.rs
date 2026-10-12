@@ -1,4 +1,5 @@
-//! The Preferences window: General, Shortcut, Clipboard and Storage tabs.
+//! The Preferences window: General, Shelf, Shortcut, Clipboard and Storage
+//! tabs.
 //! Every change is applied immediately and saved to `settings.json`.
 
 use std::cell::{OnceCell, RefCell};
@@ -154,6 +155,12 @@ define_class!(
         fn screenshots_changed(&self, sender: &NSButton) {
             let on = sender.state() == NSControlStateValueOn;
             self.update(|s| s.add_screenshots = on);
+        }
+
+        #[unsafe(method(energyChanged:))]
+        fn energy_changed(&self, sender: &NSButton) {
+            let on = sender.state() == NSControlStateValueOn;
+            self.update(|s| s.save_energy_on_battery = on);
         }
 
         #[unsafe(method(autoUpdatesChanged:))]
@@ -403,6 +410,7 @@ impl PreferencesWindow {
         let mut heights = Vec::new();
         for (label, form) in [
             ("General", self.general_tab()),
+            ("Shelf", self.shelf_tab()),
             ("Shortcut", self.shortcut_tab()),
             ("Clipboard", self.clipboard_tab()),
             ("Storage", self.storage_tab()),
@@ -491,6 +499,67 @@ impl PreferencesWindow {
             sel!(launchAtLoginChanged:),
         );
         let login_note = note(mtm, "", NOTE_WIDTH);
+        let icon = form::checkbox(
+            mtm,
+            "Show Yoinks in the menu bar",
+            target,
+            sel!(menuBarIconChanged:),
+        );
+        icon.setState(if settings.show_menu_bar_icon {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
+        let icon_note = note(
+            mtm,
+            "When hidden, open the shelf with the keyboard shortcut or by opening Yoinks \
+             again, and use the gear button at the bottom of the shelf for this window \
+             and the other menu commands.",
+            NOTE_WIDTH,
+        );
+        let energy = form::checkbox(mtm, "Save energy on battery", target, sel!(energyChanged:));
+        energy.setState(if settings.save_energy_on_battery {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
+        let energy_note = note(
+            mtm,
+            "On battery or in Low Power Mode, Yoinks checks the clipboard and the \
+             screenshot folder less often and makes no new thumbnails (icons stand in \
+             until the Mac is plugged in).",
+            NOTE_WIDTH,
+        );
+
+        let mut rows: Vec<Retained<NSView>> = vec![
+            up(&*row(mtm, "Startup:", &login)),
+            up(&*indented(mtm, &login_note)),
+            up(&*row(mtm, "Menu bar:", &icon)),
+            up(&*indented(mtm, &icon_note)),
+            up(&*row(mtm, "Battery:", &energy)),
+            up(&*indented(mtm, &energy_note)),
+        ];
+        // Only builds with Sparkle (releases) can update themselves.
+        if crate::updates::available() {
+            let updates = form::checkbox(
+                mtm,
+                "Check for updates automatically",
+                target,
+                sel!(autoUpdatesChanged:),
+            );
+            rows.insert(2, up(&*row(mtm, "Updates:", &updates)));
+            let _ = self.ivars().updates.set(updates);
+        }
+        let _ = self.ivars().login.set(login);
+        let _ = self.ivars().login_note.set(login_note);
+        up(&*column(mtm, &refs(&rows)))
+    }
+
+    fn shelf_tab(&self) -> Retained<NSView> {
+        let mtm = self.mtm();
+        let target: &AnyObject = self.as_ref();
+        let settings = self.ivars().settings.borrow().clone();
+
         let edge = form::popup(mtm, &EDGES.map(|(_, t)| t), target, sel!(edgeChanged:));
         edge.selectItemAtIndex(
             EDGES
@@ -509,24 +578,6 @@ impl PreferencesWindow {
                 .iter()
                 .position(|(m, _)| *m == settings.appear_on_drag)
                 .unwrap_or(0) as isize,
-        );
-        let icon = form::checkbox(
-            mtm,
-            "Show Yoinks in the menu bar",
-            target,
-            sel!(menuBarIconChanged:),
-        );
-        icon.setState(if settings.show_menu_bar_icon {
-            NSControlStateValueOn
-        } else {
-            NSControlStateValueOff
-        });
-        let icon_note = note(
-            mtm,
-            "When hidden, open the shelf with the keyboard shortcut or by opening Yoinks \
-             again, and use the gear button at the bottom of the shelf for this window \
-             and the other menu commands.",
-            NOTE_WIDTH,
         );
         let hide = form::checkbox(
             mtm,
@@ -606,11 +657,7 @@ impl PreferencesWindow {
         });
         let apps_view = apps.view(NOTE_WIDTH, 96.0);
 
-        let mut rows: Vec<Retained<NSView>> = vec![
-            up(&*row(mtm, "Startup:", &login)),
-            up(&*indented(mtm, &login_note)),
-            up(&*row(mtm, "Menu bar:", &icon)),
-            up(&*indented(mtm, &icon_note)),
+        let rows: Vec<Retained<NSView>> = vec![
             up(&*row(mtm, "Shelf edge:", &edge)),
             up(&*row(mtm, "Show the shelf during drags:", &appear)),
             up(&*row(mtm, "Auto-hide:", &hide)),
@@ -629,19 +676,6 @@ impl PreferencesWindow {
                 ),
             )),
         ];
-        // Only builds with Sparkle (releases) can update themselves.
-        if crate::updates::available() {
-            let updates = form::checkbox(
-                mtm,
-                "Check for updates automatically",
-                target,
-                sel!(autoUpdatesChanged:),
-            );
-            rows.insert(2, up(&*row(mtm, "Updates:", &updates)));
-            let _ = self.ivars().updates.set(updates);
-        }
-        let _ = self.ivars().login.set(login);
-        let _ = self.ivars().login_note.set(login_note);
         self.ivars().lists.borrow_mut().push(apps);
         up(&*column(mtm, &refs(&rows)))
     }

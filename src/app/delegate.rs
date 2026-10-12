@@ -46,12 +46,16 @@ pub struct Ivars {
     preferences: OnceCell<Retained<PreferencesWindow>>,
     /// Removes expired entries (`shelf_expiry_hours`).
     expiry_timer: OnceCell<Retained<NSTimer>>,
+    /// Re-reads the power state for `save_energy_on_battery`.
+    power_timer: OnceCell<Retained<NSTimer>>,
     /// Running while `add_screenshots` is on.
     screenshots: RefCell<Option<Rc<ScreenshotWatcher>>>,
 }
 
 /// How often expired entries are looked for, in seconds.
 const EXPIRY_CHECK: f64 = 60.0;
+/// How often the power source is checked, in seconds.
+const POWER_CHECK: f64 = 10.0;
 
 define_class!(
     // SAFETY:
@@ -138,6 +142,7 @@ define_class!(
             });
             crate::updates::start(mtm);
             self.start_expiry_timer();
+            self.start_power_timer();
             self.expire_entries();
             self.update_screenshot_watcher();
         }
@@ -206,6 +211,8 @@ define_class!(
                 };
                 item.setTitle(&NSString::from_str(&title));
                 available
+            } else if action == Some(sel!(searchShelf:)) {
+                !model.is_empty()
             } else if action == Some(sel!(clearShelf:)) {
                 // Clear Shelf leaves pinned items alone.
                 model.has_unpinned()
@@ -234,6 +241,13 @@ define_class!(
         #[unsafe(method(recallItems:))]
         fn recall_items(&self, _sender: Option<&AnyObject>) {
             on_gesture(self.shelf(), Gesture::LongPress);
+        }
+
+        #[unsafe(method(searchShelf:))]
+        fn search_shelf(&self, _sender: Option<&AnyObject>) {
+            let shelf = self.shelf();
+            shelf.show();
+            shelf.model().view().begin_search("");
         }
 
         #[unsafe(method(addClipboard:))]
@@ -381,6 +395,9 @@ impl AppDelegate {
         if old.shelf_expiry_hours != settings.shelf_expiry_hours {
             self.expire_entries();
         }
+        if old.save_energy_on_battery != settings.save_energy_on_battery {
+            self.update_power();
+        }
         if old.add_screenshots != settings.add_screenshots {
             self.update_screenshot_watcher();
         }
@@ -407,6 +424,31 @@ impl AppDelegate {
             NSTimer::scheduledTimerWithTimeInterval_repeats_block(EXPIRY_CHECK, true, &block)
         };
         let _ = self.ivars().expiry_timer.set(timer);
+    }
+
+    fn start_power_timer(&self) {
+        self.update_power();
+        let weak = objc2::rc::Weak::new(self);
+        let block = RcBlock::new(move |_timer: NonNull<NSTimer>| {
+            if let Some(delegate) = weak.load() {
+                delegate.update_power();
+            }
+        });
+        // SAFETY: Scheduled on the main run loop; the block only touches
+        // main-thread state.
+        let timer = unsafe {
+            NSTimer::scheduledTimerWithTimeInterval_repeats_block(POWER_CHECK, true, &block)
+        };
+        let _ = self.ivars().power_timer.set(timer);
+    }
+
+    /// Starts or stops saving energy as the power source changes. Once it
+    /// stops, the shelf asks for the thumbnails it skipped.
+    fn update_power(&self) {
+        let enabled = self.ivars().settings.borrow().save_energy_on_battery;
+        if crate::power::update(enabled) && !crate::power::saving() {
+            self.shelf().model().refresh();
+        }
     }
 
     /// Removes unpinned entries older than `shelf_expiry_hours`, if set.

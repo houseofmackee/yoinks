@@ -12,6 +12,7 @@ mod drag;
 mod hotkey;
 mod ipc;
 mod paths;
+mod power;
 mod preferences;
 mod screenshots;
 mod settings;

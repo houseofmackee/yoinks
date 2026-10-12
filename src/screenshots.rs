@@ -73,6 +73,9 @@ impl ScreenshotWatcher {
     fn poll(&self) {
         let polls = self.polls.get().wrapping_add(1);
         self.polls.set(polls);
+        if !crate::power::due(polls, crate::power::SCREENSHOT_SKIP) {
+            return;
+        }
         if polls.is_multiple_of(LOCATION_REFRESH) {
             let dir = screenshot_dir();
             if *self.dir.borrow() != dir {

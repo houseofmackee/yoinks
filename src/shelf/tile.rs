@@ -480,6 +480,12 @@ impl TileView {
 
         menu.addItem(&item("Copy", sel!(copyItem:), "c"));
         menu.addItem(&item("Copy Path", sel!(copyItemPath:), ""));
+        if model
+            .as_ref()
+            .is_some_and(|m| !m.image_paths(id).is_empty())
+        {
+            menu.addItem(&item("Copy Text", sel!(copyItemText:), ""));
+        }
         menu.addItem(&NSMenuItem::separatorItem(mtm));
 
         if model
@@ -493,7 +499,6 @@ impl TileView {
             .as_ref()
             .is_some_and(|m| !m.image_paths(id).is_empty())
         {
-            menu.addItem(&item("Copy Text", sel!(copyItemText:), ""));
             let convert = NSMenu::new(mtm);
             for (index, format) in ImageFormat::ALL.iter().enumerate() {
                 let choice = item(format.label(), sel!(convertImage:), "");

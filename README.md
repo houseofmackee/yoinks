@@ -27,8 +27,12 @@ Requires macOS 13 or later on Apple Silicon.
   to recall the last item, press twice to add the clipboard.
 - **Quick Look and thumbnails.** Space previews the selected item; arrows,
   Return, Delete and ⌘C work too, and ⌘V adds the clipboard.
-- **Search.** Start typing on the shelf (or press ⌘F) to narrow it down by
-  name, link, kind or the text inside text items.
+- **Search.** Start typing on the shelf (or press ⌘F, or choose Search
+  Shelf from the menu) to narrow it down by name, link, kind or the text
+  inside text items.
+- **Saves energy on battery** if you like: less frequent clipboard and
+  screenshot checks and no new thumbnails while unplugged or in Low Power
+  Mode.
 - **Quick actions.** Right-click a tile for Open With, Copy, Copy Path,
   Rename (text, links and images Yoinks saved), Compress to zip, Copy Text
   (recognizes the text in an image), and Convert or Resize images. Results

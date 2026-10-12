@@ -422,6 +422,12 @@ impl ShelfModel {
         self.reload();
     }
 
+    /// Rebuilds the tiles, e.g. to ask for thumbnails skipped while saving
+    /// energy.
+    pub fn refresh(&self) {
+        self.reload();
+    }
+
     pub(super) fn thumbnail_finished(&self, _id: Uuid, ok: bool) {
         if ok {
             self.reload();

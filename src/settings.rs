@@ -71,6 +71,9 @@ pub struct Settings {
     pub shelf_expiry_hours: Option<u32>,
     /// Add new screenshots and screen recordings to the shelf.
     pub add_screenshots: bool,
+    /// On battery or in Low Power Mode, poll less often and make no new
+    /// thumbnails.
+    pub save_energy_on_battery: bool,
 }
 
 impl Default for Settings {
@@ -90,6 +93,7 @@ impl Default for Settings {
             clipboard_skip_secrets: true,
             shelf_expiry_hours: None,
             add_screenshots: false,
+            save_energy_on_battery: false,
         }
     }
 }

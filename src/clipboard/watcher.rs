@@ -40,6 +40,8 @@ pub struct ClipboardHistory {
     /// The `clipboard_skip_secrets` setting.
     skip_secrets: Cell<bool>,
     paused: Cell<bool>,
+    /// Timer ticks, for polling less often while saving energy.
+    ticks: Cell<u32>,
     /// The general pasteboard's change count last seen (or set by us).
     last_change: Cell<isize>,
     on_change: RefCell<Option<Box<dyn Fn()>>>,
@@ -66,6 +68,7 @@ impl ClipboardHistory {
             enabled: Cell::new(settings.clipboard_history),
             skip_secrets: Cell::new(settings.clipboard_skip_secrets),
             paused: Cell::new(false),
+            ticks: Cell::new(0),
             last_change: Cell::new(NSPasteboard::generalPasteboard().changeCount()),
             on_change: RefCell::new(None),
             _timer: RefCell::new(None),
@@ -197,6 +200,11 @@ impl ClipboardHistory {
     }
 
     fn poll(&self) {
+        let tick = self.ticks.get().wrapping_add(1);
+        self.ticks.set(tick);
+        if !crate::power::due(tick, crate::power::CLIPBOARD_SKIP) {
+            return;
+        }
         let pasteboard = NSPasteboard::generalPasteboard();
         let count = pasteboard.changeCount();
         if count == self.last_change.replace(count) || self.paused.get() || !self.enabled.get() {

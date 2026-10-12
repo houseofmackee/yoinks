@@ -67,7 +67,9 @@ impl Thumbnails {
         if let Some(path) = self.cached(item) {
             return Some(path);
         }
-        if matches!(item.kind, ItemKind::Pending | ItemKind::Url { .. }) {
+        // No new thumbnails while saving energy; the icon stands in, and
+        // the shelf reloads (and asks again) when saving stops.
+        if matches!(item.kind, ItemKind::Pending | ItemKind::Url { .. }) || crate::power::saving() {
             return None;
         }
         let version = modified(&item.path);
