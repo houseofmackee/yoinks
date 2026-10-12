@@ -81,7 +81,7 @@ src/
   updates.rs         Sparkle, loaded at runtime from release bundles
   settings.rs        typed settings with serde defaults (settings.json)
   preferences/
-    window.rs        tabs (General, Shelf, Shortcut, Clipboard, Storage)
+    window.rs        tabs (General, Shelf, Adding, Shortcut, Clipboard, Storage)
     recorder.rs      shortcut recorder button
     app_list.rs      editable app list (+ from running apps)
     form.rs          layout helpers
@@ -386,6 +386,11 @@ Key design points:
   preferences tab. The first real update over GitHub: the installed 0.3.0
   offered 0.4.0 with its changelog notes, then downloaded, verified,
   installed and relaunched it; the result is still notarized.
+- [x] Preferences fit again (2026-10-12): the Shelf tab had grown to
+  about 860 points; notch, screenshots and watched folders moved to a new
+  Adding tab (tallest tab now about 550). Preferences, Clipboard History
+  and the prompts follow the active Space (`ui::follow_active_space`), so
+  they no longer reopen on the desktop where they were first shown.
 - [x] v0.6.0 (2026-10-12): reorder tiles by dragging, drop onto the menu
   bar icon, and the notch as an optional drop target, with README
   screenshots of both. The installed 0.5.0 updated to it through Sparkle;

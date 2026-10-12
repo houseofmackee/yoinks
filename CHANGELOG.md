@@ -7,6 +7,16 @@ shown in the update window and on its GitHub release.
 
 ## [Unreleased]
 
+### Changed
+
+- Preferences has a new Adding tab (notch, screenshots, watched folders),
+  so the Shelf tab fits on smaller screens again.
+
+### Fixed
+
+- Preferences, Clipboard History and the naming prompts open on the
+  desktop you are on, not the one where they were first opened.
+
 ## [0.6.0] (2026-10-12)
 
 ### Added

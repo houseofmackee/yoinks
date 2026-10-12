@@ -514,6 +514,7 @@ impl HistoryPanel {
         panel.setFloatingPanel(true);
         panel.setLevel(NSStatusWindowLevel);
         panel.setHidesOnDeactivate(false);
+        crate::ui::follow_active_space(&panel);
         panel.setCollectionBehavior(
             NSWindowCollectionBehavior::CanJoinAllSpaces
                 | NSWindowCollectionBehavior::FullScreenAuxiliary,

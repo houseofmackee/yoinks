@@ -286,6 +286,7 @@ impl RenamePrompt {
         unsafe { panel.setReleasedWhenClosed(false) };
         panel.setLevel(NSStatusWindowLevel);
         panel.setHidesOnDeactivate(false);
+        crate::ui::follow_active_space(&panel);
         panel.setTitle(&NSString::from_str(title));
         panel.setContentView(Some(&content));
         let fitted = content.fittingSize();

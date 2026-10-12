@@ -61,7 +61,7 @@ Free and open source. Requires macOS 13 or later on Apple silicon.
 
 - **Onto the notch or the menu bar icon.** On a Mac with a notch, drag
   something onto the notch: it opens into a "Drop to add to Yoinks" pill
-  (optional, in Preferences > Shelf). Dropping onto the menu bar icon
+  (optional, in Preferences > Adding). Dropping onto the menu bar icon
   works on any Mac.
 
 <p align="center">
@@ -94,9 +94,9 @@ Free and open source. Requires macOS 13 or later on Apple silicon.
 - **Preferences** for all of it, applied instantly.
 
 <p align="center">
-  <img src="docs/screenshots/preferences-shelf.png" width="448" alt="Preferences, Shelf tab: edge, when to show the shelf, auto-hide, keep after dragging out, expiry, color tint, notch drops, screenshots, watched folders and ignored apps">
+  <img src="docs/screenshots/preferences-shelf.png" width="448" alt="Preferences, Shelf tab: edge, when to show the shelf, apps whose drags don't show it, auto-hide, keep after dragging out, expiry and color tint">
   &nbsp;
-  <img src="docs/screenshots/preferences-general.png" width="448" alt="Preferences, General tab: open at login, menu bar icon and save energy on battery">
+  <img src="docs/screenshots/preferences-adding.png" width="448" alt="Preferences, Adding tab: drop onto the notch, add new screenshots, and watched folders">
 </p>
 
 ## Install

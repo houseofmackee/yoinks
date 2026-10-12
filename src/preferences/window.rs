@@ -1,5 +1,5 @@
-//! The Preferences window: General, Shelf, Shortcut, Clipboard and Storage
-//! tabs.
+//! The Preferences window: General, Shelf, Adding, Shortcut, Clipboard and
+//! Storage tabs.
 //! Every change is applied immediately and saved to `settings.json`.
 
 use std::cell::{OnceCell, RefCell};
@@ -424,6 +424,7 @@ impl PreferencesWindow {
         for (label, form) in [
             ("General", self.general_tab()),
             ("Shelf", self.shelf_tab()),
+            ("Adding", self.adding_tab()),
             ("Shortcut", self.shortcut_tab()),
             ("Clipboard", self.clipboard_tab()),
             ("Storage", self.storage_tab()),
@@ -486,6 +487,7 @@ impl PreferencesWindow {
             ")"
         )));
         window.setHidesOnDeactivate(false);
+        crate::ui::follow_active_space(&window);
         window.setContentView(Some(&tabs));
         window.setContentSize(NSSize::new(WIDTH, height));
         let _ = self.ivars().window.set(window);
@@ -605,9 +607,8 @@ impl PreferencesWindow {
         });
         let hide_note = note(
             mtm,
-            "It slides away about a second after the pointer leaves it. With items on it, \
-             it stays until you hide it (Escape, the shortcut or the menu). Drag the shelf \
-             by its background to move it; the gear menu puts it back at the edge.",
+            "An empty shelf slides away a second after the pointer leaves it. Drag the \
+             shelf by its background to move it.",
             NOTE_WIDTH,
         );
         let keep = form::checkbox(
@@ -660,6 +661,43 @@ impl PreferencesWindow {
             "Give a shelf a color in the menu: Shelves > Color.",
             NOTE_WIDTH,
         );
+        let weak = Weak::new(self);
+        let apps = AppList::new(mtm, settings.ignored_apps.clone(), move |ids| {
+            if let Some(this) = weak.load() {
+                this.update(|s| s.ignored_apps = ids);
+            }
+        });
+        let apps_view = apps.view(NOTE_WIDTH, 72.0);
+
+        let rows: Vec<Retained<NSView>> = vec![
+            up(&*row(mtm, "Shelf edge:", &edge)),
+            up(&*row(mtm, "Show the shelf during drags:", &appear)),
+            up(&*row(mtm, "But not for drags from:", &apps_view)),
+            up(&*indented(
+                mtm,
+                &note(
+                    mtm,
+                    "The keyboard shortcut and menu bar icon still work in these apps.",
+                    NOTE_WIDTH,
+                ),
+            )),
+            up(&*row(mtm, "Auto-hide:", &hide)),
+            up(&*indented(mtm, &hide_note)),
+            up(&*row(mtm, "After dragging out:", &keep)),
+            up(&*row(mtm, "Remove unpinned items:", &expiry)),
+            up(&*row(mtm, "Color:", &tint)),
+            up(&*indented(mtm, &tint_note)),
+        ];
+        self.ivars().lists.borrow_mut().push(apps);
+        up(&*column(mtm, &refs(&rows)))
+    }
+
+    /// Ways things get onto the shelf without dragging them there.
+    fn adding_tab(&self) -> Retained<NSView> {
+        let mtm = self.mtm();
+        let target: &AnyObject = self.as_ref();
+        let settings = self.ivars().settings.borrow().clone();
+
         let notch = form::checkbox(
             mtm,
             "Drop onto the notch to add to the shelf",
@@ -710,7 +748,7 @@ impl PreferencesWindow {
                 }
             },
         );
-        let folders_view = folders.view(NOTE_WIDTH, 72.0);
+        let folders_view = folders.view(NOTE_WIDTH, 96.0);
         let folders_note = note(
             mtm,
             "New files and folders appear on the shelf once they have finished copying \
@@ -718,41 +756,15 @@ impl PreferencesWindow {
             NOTE_WIDTH,
         );
 
-        let weak = Weak::new(self);
-        let apps = AppList::new(mtm, settings.ignored_apps.clone(), move |ids| {
-            if let Some(this) = weak.load() {
-                this.update(|s| s.ignored_apps = ids);
-            }
-        });
-        let apps_view = apps.view(NOTE_WIDTH, 96.0);
-
         let rows: Vec<Retained<NSView>> = vec![
-            up(&*row(mtm, "Shelf edge:", &edge)),
-            up(&*row(mtm, "Show the shelf during drags:", &appear)),
-            up(&*row(mtm, "Auto-hide:", &hide)),
-            up(&*indented(mtm, &hide_note)),
-            up(&*row(mtm, "After dragging out:", &keep)),
-            up(&*row(mtm, "Remove unpinned items:", &expiry)),
-            up(&*row(mtm, "Color:", &tint)),
-            up(&*indented(mtm, &tint_note)),
             up(&*row(mtm, "Notch:", &notch)),
             up(&*indented(mtm, &notch_note)),
             up(&*row(mtm, "Screenshots:", &screenshots)),
             up(&*indented(mtm, &screenshots_note)),
             up(&*row(mtm, "Watch folders:", &folders_view)),
             up(&*indented(mtm, &folders_note)),
-            up(&*row(mtm, "Don't show it for drags from:", &apps_view)),
-            up(&*indented(
-                mtm,
-                &note(
-                    mtm,
-                    "The keyboard shortcut and menu bar icon still work in these apps.",
-                    NOTE_WIDTH,
-                ),
-            )),
         ];
         self.ivars().lists.borrow_mut().push(folders);
-        self.ivars().lists.borrow_mut().push(apps);
         up(&*column(mtm, &refs(&rows)))
     }
 

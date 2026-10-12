@@ -105,3 +105,13 @@ pub fn tag_dot(color: crate::shelf::TagColor) -> Option<Retained<objc2_app_kit::
     );
     symbol.imageWithSymbolConfiguration(&palette)
 }
+
+/// Makes `window` show up on the desktop (Space) the user is on, also over
+/// full-screen apps, instead of staying on the one where it first opened.
+pub fn follow_active_space(window: &objc2_app_kit::NSWindow) {
+    use objc2_app_kit::NSWindowCollectionBehavior;
+    window.setCollectionBehavior(
+        NSWindowCollectionBehavior::MoveToActiveSpace
+            | NSWindowCollectionBehavior::FullScreenAuxiliary,
+    );
+}
