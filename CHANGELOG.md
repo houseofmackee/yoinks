@@ -7,6 +7,8 @@ shown in the update window and on its GitHub release.
 
 ## [Unreleased]
 
+## [0.5.0] (2026-10-12)
+
 ### Added
 
 - Homebrew: `brew install --cask houseofmackee/tap/yoinks` installs the app
