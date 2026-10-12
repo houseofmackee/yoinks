@@ -13,6 +13,8 @@ shown in the update window and on its GitHub release.
   go.
 - Drop onto the menu bar icon to add to the shelf, without waiting for the
   shelf to appear.
+- Drop onto the notch (Macs with one): it opens into a "Drop to add to
+  Yoinks" pill. On by default; Preferences > Shelf turns it off.
 
 ## [0.5.0] (2026-10-12)
 

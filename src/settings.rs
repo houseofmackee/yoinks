@@ -75,6 +75,8 @@ pub struct Settings {
     pub add_screenshots: bool,
     /// Tint the shelf's background with its color tag.
     pub tint_shelf: bool,
+    /// Take drops on the notch (Macs with a notch).
+    pub notch_drop: bool,
     /// Folders whose new files and folders are added to the shelf.
     pub watched_folders: Vec<PathBuf>,
     /// On battery or in Low Power Mode, poll less often and make no new
@@ -101,6 +103,7 @@ impl Default for Settings {
             add_screenshots: false,
             watched_folders: Vec::new(),
             tint_shelf: true,
+            notch_drop: true,
             save_energy_on_battery: false,
         }
     }

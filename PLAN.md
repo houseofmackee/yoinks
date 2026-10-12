@@ -77,6 +77,7 @@ src/
     carbon.rs        RegisterEventHotKey registration and dispatch
   folders.rs         watches the screenshot folder and watched folders
   power.rs           energy saving on battery or in Low Power Mode
+  notch.rs           the notch as a drop target
   updates.rs         Sparkle, loaded at runtime from release bundles
   settings.rs        typed settings with serde defaults (settings.json)
   preferences/
@@ -454,7 +455,7 @@ Key design points:
 | Share menu | Send items with AirDrop, Mail, Messages and other share services | Done: right-click > Share (services listed directly; the share picker popover needs an active app) |
 | Shake to show | Shake the pointer mid-drag to bring up the shelf (as in Dropover) | Done: a choice under "Show the shelf during drags" |
 | Reorder tiles | Drag a tile up or down within the shelf | Done: within Yoinks a tile drag is a move; the shelf shows an insertion line and moves the entry |
-| Drop on the menu bar icon | Drop items on the menu bar icon (or the notch area) to add them | Done for the menu bar icon (its window is registered for drags; `src/app/status_drop.rs`); the notch area is not |
+| Drop on the menu bar icon | Drop items on the menu bar icon (or the notch area) to add them | Done: the icon's window is registered for drags (`src/app/status_drop.rs`), and on Macs with a notch a pill-sized panel over it draws only the notch until a drag arrives, so its clear pixels let clicks through (`src/notch.rs`, optional) |
 | Sensitive content redaction | Detect and skip likely secrets (API keys, tokens) in clipboard history | Done: known key formats, private keys, credential lines and random tokens are skipped (Preferences > Clipboard) |
 | Low-resource mode | Disable thumbnails and polling on battery power | Done: "Save energy on battery" (Preferences > General) slows clipboard and screenshot polling and skips new thumbnails on battery or in Low Power Mode |
 
@@ -510,8 +511,7 @@ Key design points:
   team and can only be tried from an installed, signed build.
 - Text snippet editing: edit a text clipping in place before dragging it
   out.
-- Ideas from the comparison with Dropover, Droppy and Dropzone: the
-  notch area as a drop target; custom actions on items (partly covered by
+- Custom actions on items, as in Dropzone and Dropover (partly covered by
   the Shortcuts actions and the command line).
 
 **Testing**

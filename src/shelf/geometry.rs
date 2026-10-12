@@ -125,6 +125,25 @@ pub fn screen_containing(screens: &[NSRect], point: NSPoint) -> Option<usize> {
     })
 }
 
+/// The notch on a screen with one (`top_inset` is the safe area's top
+/// inset; `left` and `right` are the usable areas beside the notch, in the
+/// same coordinates as `frame`), or `None` on screens without a notch.
+pub fn notch_rect(frame: NSRect, top_inset: f64, left: NSRect, right: NSRect) -> Option<NSRect> {
+    if top_inset <= 0.0 || left.size.width <= 0.0 || right.size.width <= 0.0 {
+        return None;
+    }
+    let x = left.origin.x + left.size.width;
+    let width = right.origin.x - x;
+    if width < 20.0 {
+        return None;
+    }
+    let top = frame.origin.y + frame.size.height;
+    Some(NSRect::new(
+        NSPoint::new(x, top - top_inset),
+        NSSize::new(width, top_inset),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,6 +175,41 @@ mod tests {
             frames.shown.origin.y,
             100.0 + (1000.0 - SHELF_MAX_HEIGHT) / 2.0
         );
+    }
+
+    #[test]
+    fn notch_between_the_side_areas() {
+        let rect = |x, y, w, h| NSRect::new(NSPoint::new(x, y), NSSize::new(w, h));
+        // A 14" MacBook Pro.
+        let frame = rect(0.0, 0.0, 1728.0, 1117.0);
+        let notch = notch_rect(
+            frame,
+            32.0,
+            rect(0.0, 1085.0, 771.0, 32.0),
+            rect(956.0, 1085.0, 772.0, 32.0),
+        )
+        .unwrap();
+        assert_eq!(notch, rect(771.0, 1085.0, 185.0, 32.0));
+        // Placed to the right of a main display.
+        let moved = notch_rect(
+            rect(1920.0, -40.0, 1728.0, 1117.0),
+            32.0,
+            rect(1920.0, 1045.0, 771.0, 32.0),
+            rect(2876.0, 1045.0, 772.0, 32.0),
+        )
+        .unwrap();
+        assert_eq!(moved, rect(2691.0, 1045.0, 185.0, 32.0));
+    }
+
+    #[test]
+    fn no_notch_without_insets_or_side_areas() {
+        let rect = |x, y, w, h| NSRect::new(NSPoint::new(x, y), NSSize::new(w, h));
+        let frame = rect(0.0, 0.0, 1920.0, 1080.0);
+        assert_eq!(notch_rect(frame, 0.0, NSRect::ZERO, NSRect::ZERO), None);
+        assert_eq!(notch_rect(frame, 32.0, NSRect::ZERO, NSRect::ZERO), None);
+        let left = rect(0.0, 1048.0, 955.0, 32.0);
+        let right = rect(965.0, 1048.0, 955.0, 32.0);
+        assert_eq!(notch_rect(frame, 32.0, left, right), None, "too narrow");
     }
 
     #[test]

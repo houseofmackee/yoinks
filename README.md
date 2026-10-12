@@ -36,8 +36,14 @@ Free and open source. Requires macOS 13 or later on Apple silicon.
   typing on the shelf, or press ⌘F.
 - **Pinning.** Pinned items stay after you drag them out and survive Clear
   Shelf. Unpinned items can also expire after an hour to 30 days.
-- **Arrange it.** Drag tiles up or down to reorder them. Drag the shelf by
-  its background to move it; "Move Shelf Back to Edge" undoes it.
+- **Arrange it.** Drag tiles up or down to reorder them; a line shows where
+  a tile will land. Drag the shelf by its background to move it; "Move
+  Shelf Back to Edge" undoes it.
+
+<p align="center">
+  <img src="docs/screenshots/reorder.png" width="130" alt="Reordering: a link tile being dragged up, with a blue line between the first two tiles where it will land">
+</p>
+
 
 **Doing things with items**
 
@@ -53,8 +59,16 @@ Free and open source. Requires macOS 13 or later on Apple silicon.
 
 **Getting things onto the shelf**
 
-- **From anywhere:** drop onto the menu bar icon, "Yoinks" in other apps'
-  Share menus, "Add to Yoinks" in
+- **Onto the notch or the menu bar icon.** On a Mac with a notch, drag
+  something onto the notch: it opens into a "Drop to add to Yoinks" pill
+  (optional, in Preferences > Shelf). Dropping onto the menu bar icon
+  works on any Mac.
+
+<p align="center">
+  <img src="docs/screenshots/notch.png" width="270" alt="A file dragged onto the notch, which has opened into a black pill reading Drop to add to Yoinks">
+</p>
+
+- **From anywhere:** "Yoinks" in other apps' Share menus, "Add to Yoinks" in
   the Services menu and Finder's Quick Actions, Shortcuts actions, the
   `yoinks` command and `yoinks://` links.
 - **Automatically,** if you like: new screenshots and screen recordings, and
@@ -80,7 +94,7 @@ Free and open source. Requires macOS 13 or later on Apple silicon.
 - **Preferences** for all of it, applied instantly.
 
 <p align="center">
-  <img src="docs/screenshots/preferences-shelf.png" width="448" alt="Preferences, Shelf tab: edge, when to show the shelf, auto-hide, keep after dragging out, expiry, color tint, screenshots, watched folders and ignored apps">
+  <img src="docs/screenshots/preferences-shelf.png" width="448" alt="Preferences, Shelf tab: edge, when to show the shelf, auto-hide, keep after dragging out, expiry, color tint, notch drops, screenshots, watched folders and ignored apps">
   &nbsp;
   <img src="docs/screenshots/preferences-general.png" width="448" alt="Preferences, General tab: open at login, menu bar icon and save energy on battery">
 </p>
@@ -117,7 +131,7 @@ updates.
 
 | To | Do |
 | --- | --- |
-| Put something on the shelf | Drag it to the shelf or onto the menu bar icon, share it to Yoinks, or press ⌃⌥Y twice to add the clipboard |
+| Put something on the shelf | Drag it to the shelf, the notch or the menu bar icon, share it to Yoinks, or press ⌃⌥Y twice to add the clipboard |
 | Reorder the shelf | Drag a tile up or down |
 | Take it off | Drag it out, or right-click > Remove |
 | Show or hide the shelf | ⌃⌥Y, the menu bar icon, or Escape |

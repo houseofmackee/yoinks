@@ -12,6 +12,7 @@ mod drag;
 mod folders;
 mod hotkey;
 mod ipc;
+mod notch;
 mod paths;
 mod power;
 mod preferences;

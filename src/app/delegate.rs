@@ -26,6 +26,7 @@ use crate::drag::DragMonitor;
 use crate::folders::{Folder, FolderWatcher};
 use crate::hotkey::{Gesture, HotKey};
 use crate::ipc::{self, Request, server};
+use crate::notch::NotchTarget;
 use crate::paths;
 use crate::preferences::{PreferencesHooks, PreferencesWindow};
 use crate::settings::Settings;
@@ -43,6 +44,8 @@ pub struct Ivars {
     status_item: OnceCell<Retained<NSStatusItem>>,
     /// Makes the menu bar icon a drop target.
     status_drop: OnceCell<Retained<StatusDrop>>,
+    /// Makes the notch a drop target (`notch_drop`).
+    notch: OnceCell<Rc<NotchTarget>>,
     drag_monitor: OnceCell<Rc<DragMonitor>>,
     hotkey: RefCell<Option<Rc<HotKey>>>,
     clipboard: OnceCell<Rc<ClipboardHistory>>,
@@ -136,21 +139,15 @@ define_class!(
                     &self.shelf().model().shelves(),
                     show_icon,
                 ));
-            // Dropping on the menu bar icon adds to the shelf.
-            if let Some(item) = ivars.status_item.get() {
-                let shelf = Rc::clone(self.shelf());
-                let drop = StatusDrop::install(mtm, item, move |pasteboard| {
-                    let added = shelf.model().accept(read_pasteboard(pasteboard));
-                    if added {
-                        shelf.appear_at_edge();
-                        shelf.arm_auto_hide(HIDE_AFTER_ADD);
-                    }
-                    added
-                });
-                if let Some(drop) = drop {
-                    let _ = ivars.status_drop.set(drop);
-                }
+            // Dropping on the menu bar icon or the notch adds to the shelf.
+            if let Some(item) = ivars.status_item.get()
+                && let Some(drop) = StatusDrop::install(mtm, item, add_dropped(self.shelf()))
+            {
+                let _ = ivars.status_drop.set(drop);
             }
+            let notch = NotchTarget::start(mtm, add_dropped(self.shelf()));
+            notch.set_enabled(ivars.settings.borrow().notch_drop);
+            let _ = ivars.notch.set(notch);
             // Remember where the user drags the shelf.
             let mover = objc2::rc::Weak::new(self);
             self.shelf().set_on_moved(move |origin| {
@@ -546,6 +543,9 @@ impl AppDelegate {
         if old.save_energy_on_battery != settings.save_energy_on_battery {
             self.update_power();
         }
+        if let Some(notch) = ivars.notch.get() {
+            notch.set_enabled(settings.notch_drop);
+        }
         if old.add_screenshots != settings.add_screenshots
             || old.watched_folders != settings.watched_folders
         {
@@ -729,4 +729,18 @@ fn confirm_delete(mtm: MainThreadMarker, name: &str, count: usize) -> bool {
     alert.addButtonWithTitle(ns_string!("Cancel"));
     crate::ui::activate_app(mtm);
     alert.runModal() == objc2_app_kit::NSAlertFirstButtonReturn
+}
+
+/// Adds what is dropped (on the menu bar icon or the notch) to the shelf
+/// and shows it; false if nothing could be used.
+fn add_dropped(shelf: &Rc<Shelf>) -> impl Fn(&NSPasteboard) -> bool + 'static {
+    let shelf = Rc::clone(shelf);
+    move |pasteboard| {
+        let added = shelf.model().accept(read_pasteboard(pasteboard));
+        if added {
+            shelf.appear_at_edge();
+            shelf.arm_auto_hide(HIDE_AFTER_ADD);
+        }
+        added
+    }
 }

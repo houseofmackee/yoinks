@@ -158,6 +158,12 @@ define_class!(
             self.update(|s| s.add_screenshots = on);
         }
 
+        #[unsafe(method(notchChanged:))]
+        fn notch_changed(&self, sender: &NSButton) {
+            let on = sender.state() == NSControlStateValueOn;
+            self.update(|s| s.notch_drop = on);
+        }
+
         #[unsafe(method(tintChanged:))]
         fn tint_changed(&self, sender: &NSButton) {
             let on = sender.state() == NSControlStateValueOn;
@@ -654,6 +660,22 @@ impl PreferencesWindow {
             "Give a shelf a color in the menu: Shelves > Color.",
             NOTE_WIDTH,
         );
+        let notch = form::checkbox(
+            mtm,
+            "Drop onto the notch to add to the shelf",
+            target,
+            sel!(notchChanged:),
+        );
+        notch.setState(if settings.notch_drop {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
+        let notch_note = note(
+            mtm,
+            "On Macs with a notch. Dropping onto the menu bar icon always works.",
+            NOTE_WIDTH,
+        );
         let screenshots = form::checkbox(
             mtm,
             "Add new screenshots to the shelf",
@@ -713,6 +735,8 @@ impl PreferencesWindow {
             up(&*row(mtm, "Remove unpinned items:", &expiry)),
             up(&*row(mtm, "Color:", &tint)),
             up(&*indented(mtm, &tint_note)),
+            up(&*row(mtm, "Notch:", &notch)),
+            up(&*indented(mtm, &notch_note)),
             up(&*row(mtm, "Screenshots:", &screenshots)),
             up(&*indented(mtm, &screenshots_note)),
             up(&*row(mtm, "Watch folders:", &folders_view)),
