@@ -350,6 +350,10 @@ Key design points:
 - [x] v0.3.0 (2026-10-12): the first full release that is Developer ID
   signed, notarized and carries Sparkle, with its `appcast.xml` as the
   update feed. Installed in /Applications from the release DMG.
+- [x] v0.4.0 (2026-10-12): shelf search, energy saving and the Shelf
+  preferences tab. The first real update over GitHub: the installed 0.3.0
+  offered 0.4.0 with its changelog notes, then downloaded, verified,
+  installed and relaunched it; the result is still notarized.
 - [x] Automatic updates with Sparkle 2.10 (2026-10-12), as in CleanShotZ:
   `scripts/sparkle.sh` downloads it at a pinned checksum, `bundle.sh`
   embeds it in release builds (no XPC services) with the feed URL and
@@ -448,7 +452,7 @@ Key design points:
   behind a trait so a sync backend (iCloud via CloudKit, or a shared folder)
   can be added later without reworking the model.
 
-## 9. What's left (as of v0.3.0, 2026-10-12)
+## 9. What's left (as of v0.4.0, 2026-10-12)
 
 **Features (section 5)**
 - Multiple named shelves, each persisted separately, with a switcher.
@@ -461,9 +465,6 @@ Key design points:
   The widget also needs an App Group.
 
 **Release and distribution**
-- A real Sparkle update in the field: the flow was tested end to end with
-  a local feed, but the first update from GitHub happens with the next
-  full release after 0.3.0. Check it then.
 - Homebrew cask in `houseofmackee/homebrew-tap`, updated by the release
   workflow with a deploy key (the CleanShotZ `TAP_DEPLOY_KEY` pattern).
 
