@@ -7,6 +7,8 @@ shown in the update window and on its GitHub release.
 
 ## [Unreleased]
 
+## [0.6.1] (2026-10-12)
+
 ### Changed
 
 - Preferences has a new Adding tab (notch, screenshots, watched folders),
