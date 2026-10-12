@@ -378,6 +378,29 @@ impl ShelfModel {
         });
     }
 
+    /// Moves files Yoinks may take over (written by the Share extension)
+    /// into its items folder and adds them as one entry. False if none
+    /// could be moved.
+    pub fn adopt_files(&self, paths: &[PathBuf]) -> bool {
+        let items: Vec<Item> = paths
+            .iter()
+            .filter_map(|path| {
+                self.items_dir
+                    .adopt(path)
+                    .inspect_err(|error| {
+                        eprintln!("yoinks: could not take {}: {error}", path.display())
+                    })
+                    .ok()
+            })
+            .collect();
+        if items.is_empty() {
+            return false;
+        }
+        self.store.borrow_mut().insert(Entry::new(items));
+        self.reload();
+        true
+    }
+
     /// Copy Text: recognizes the text in the entry's images on a background
     /// thread and puts it on the clipboard. Beeps if there is none.
     pub fn copy_text(&self, id: Uuid) {

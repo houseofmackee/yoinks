@@ -24,6 +24,12 @@ pub enum Request {
     Show,
     Hide,
     Recall,
+    /// Switch to the named shelf (any case); without a name, just report
+    /// the shelves.
+    Shelf {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
 }
 
 impl Request {
@@ -45,6 +51,12 @@ pub struct Response {
     /// The shelf after the request, newest first.
     #[serde(default)]
     pub entries: Vec<EntryInfo>,
+    /// The shelf the entries are on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shelf: Option<String>,
+    /// Every shelf's name, in menu order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shelves: Vec<String>,
 }
 
 impl Response {
@@ -53,6 +65,8 @@ impl Response {
             ok: true,
             error: None,
             entries,
+            shelf: None,
+            shelves: Vec::new(),
         }
     }
 
@@ -61,6 +75,8 @@ impl Response {
             ok: false,
             error: Some(message.into()),
             entries: Vec::new(),
+            shelf: None,
+            shelves: Vec::new(),
         }
     }
 }

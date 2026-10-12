@@ -297,7 +297,7 @@ Key design points:
   iPhone or iPad" (Continuity Camera). The shelf is the receiver of the
   photo or scan. Not verified with a device (none was available).
 
-### Phase 9b: Swift add-ons (deferred, option for later)
+### Phase 9b: Swift add-ons (Share extension and Shortcuts done; widget to do)
 - Share extension ("Yoinks" in Share menus), Shortcuts actions (App
   Intents: Add to Shelf, Get Shelf Items, Clear Shelf, Show Shelf) and a
   widget showing recent clips, in a small Xcode project under `swift/`
@@ -313,6 +313,24 @@ Key design points:
 - Update (2026-10-12): the Developer ID team (ZD5VPNGP3T) is now set up,
   so this is unblocked. An App Group for the widget still needs to be
   registered with that team.
+- [x] Shortcuts actions (2026-10-12), built like CleanShotZ's without an
+  Xcode project: `build.rs` compiles `swift/Intents.swift` into a static
+  library linked into the app, and `bundle.sh` runs Xcode's
+  `appintentsmetadataprocessor` for `Metadata.appintents`. Add Files, Add
+  Text, Add Link, Get Shelf Items, Show, Hide, Clear, Bring Back Last
+  Item and Switch Shelf (with the shelves offered as options). They send
+  the command line's JSON requests to `yoinks_request` (src/app/
+  intents.rs). Checked in the metadata and by a bridge test; trying them
+  in Shortcuts needs the installed app.
+- [x] Share extension (2026-10-12): `swift/ShareExtension.swift` built
+  by `bundle.sh` into `Contents/PlugIns/YoinksShare.appex`, sandboxed,
+  signed before the app and notarized with it. It hands files, links and
+  text to the app through `yoinks://add` links; images that only exist
+  as data are written into its container, and Yoinks takes them over.
+  Tested by registering a dev build and sharing files, image data, text
+  and a link through the share services.
+- To do: the widget (recent shelf items or clips). Needs an App Group
+  with the team and can only be tried from an installed, signed build.
 
 ### Phase 10: Packaging and distribution (done)
 - [x] Apple Silicon only (decision 2026-10-10): no universal binary.
@@ -345,6 +363,8 @@ Key design points:
   validating are retried up to five times, because the CI runner's
   connection to Apple's ticket server dropped twice on the first v0.3.0
   run.
+- [x] `yoinks shelf [<name>]` and a `shelf` request switch or list
+  shelves; responses carry the current shelf and all shelf names.
 - [x] `CHANGELOG.md` (2026-10-12): each version's section is rendered
   by `scripts/release-notes.py` into the appcast (shown in Sparkle's
   update window) and put at the top of the GitHub release notes; the
@@ -467,10 +487,11 @@ Key design points:
 - Text snippet editing: edit a text clipping in place before dragging it
   out.
 
-**Swift add-ons (Phase 9b), now unblocked by the Developer ID**
-- Share extension, Shortcuts actions (App Intents) and a widget, in a
-  small Xcode project embedded by `bundle.sh` and signed like the rest.
-  The widget also needs an App Group.
+**Swift add-ons (Phase 9b)**
+- The widget (recent shelf items or clips); the Share extension and
+  Shortcuts actions are done. It needs an App Group with the team.
+- Try the Shortcuts actions in the Shortcuts app once a release with
+  them is installed.
 
 **Testing**
 - Integration tests for the CLI and IPC socket.

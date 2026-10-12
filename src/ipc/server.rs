@@ -78,6 +78,11 @@ fn serve(stream: UnixStream) -> io::Result<()> {
     stream.set_write_timeout(Some(TIMEOUT))?;
     let mut line = String::new();
     BufReader::new((&stream).take(MAX_REQUEST_BYTES)).read_line(&mut line)?;
+    // A client checking whether Yoinks is running connects and closes
+    // without a request; there is nobody to answer.
+    if line.trim().is_empty() {
+        return Ok(());
+    }
     let response = match serde_json::from_str::<Request>(&line) {
         Ok(request) => on_main(request),
         Err(error) => Response::error(format!("bad request: {error}")),

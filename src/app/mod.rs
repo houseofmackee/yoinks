@@ -2,6 +2,7 @@
 
 mod commands;
 mod delegate;
+mod intents;
 mod status_item;
 
 pub use delegate::AppDelegate;

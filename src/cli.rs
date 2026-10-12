@@ -20,7 +20,8 @@ Commands:
   list [--json]          List what is on the shelf
   show | hide            Show or hide the shelf
   recall                 Bring back the last item dragged out
-  clear                  Remove everything from the shelf
+  clear                  Remove everything (but pinned items) from the shelf
+  shelf [<name>]         Switch to a shelf, or list them (* marks the current one)
   help                   Show this help
 
 Yoinks is started in the background if it is not running.";
@@ -72,6 +73,12 @@ pub fn parse(args: &[String], cwd: &Path) -> Result<Command, String> {
             }),
             _ => Err("usage: yoinks list [--json]".to_owned()),
         },
+        "shelf" => Ok(Command::Send {
+            request: Request::Shelf {
+                name: (!rest.is_empty()).then(|| rest.join(" ")),
+            },
+            json: false,
+        }),
         "add" => parse_add(rest, cwd),
         other => Err(format!("unknown command {other:?}")),
     }
@@ -158,6 +165,15 @@ fn print(request: &Request, response: &Response, json: bool) -> ExitCode {
             "{}",
             serde_json::to_string_pretty(&response.entries).unwrap_or_default()
         );
+    } else if let Request::Shelf { name: None } = request {
+        for name in &response.shelves {
+            let mark = if response.shelf.as_ref() == Some(name) {
+                "*"
+            } else {
+                " "
+            };
+            println!("{mark} {name}");
+        }
     } else if *request == Request::List {
         for entry in &response.entries {
             let paths: Vec<String> = entry
@@ -267,6 +283,16 @@ mod tests {
             }
         );
         assert_eq!(parse(&args(&["clear"]), cwd).unwrap(), send(Request::Clear));
+        assert_eq!(
+            parse(&args(&["shelf"]), cwd).unwrap(),
+            send(Request::Shelf { name: None })
+        );
+        assert_eq!(
+            parse(&args(&["shelf", "Design", "assets"]), cwd).unwrap(),
+            send(Request::Shelf {
+                name: Some("Design assets".to_owned())
+            })
+        );
         assert_eq!(parse(&args(&["help"]), cwd).unwrap(), Command::Help);
         assert!(parse(&args(&["show", "extra"]), cwd).is_err());
         assert!(parse(&args(&["list", "--yaml"]), cwd).is_err());

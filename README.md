@@ -131,6 +131,7 @@ yoinks add --text "Call Sam at 3"
 yoinks add --url https://example.com --title "Example"
 yoinks list                          # or: yoinks list --json
 yoinks show | hide | recall | clear
+yoinks shelf                         # list shelves; yoinks shelf Invoices switches
 ```
 
 Yoinks is started in the background if it is not running.

@@ -23,6 +23,19 @@ shown in the update window and on its GitHub release.
 - Watched folders: new files and folders in the folders you pick (for
   example Downloads) are added to the shelf once they have finished
   copying or downloading (Preferences > Shelf).
+- Shortcuts actions: Add Files, Add Text, Add Link, Get Shelf Items,
+  Show Shelf, Hide Shelf, Clear Shelf, Bring Back Last Item and Switch
+  Shelf.
+- "Yoinks" in other apps' Share menus (Safari, Photos, Finder and more):
+  shared files, images, links and text go on the shelf. It may need to
+  be switched on once in System Settings > General > Login Items &
+  Extensions > Sharing.
+- `yoinks shelf <name>` switches shelves; `yoinks shelf` lists them.
+
+### Fixed
+
+- The command line no longer makes Yoinks log a "Broken pipe" error
+  each time it checks whether the app is running.
 
 ## [0.4.0] (2026-10-12)
 
