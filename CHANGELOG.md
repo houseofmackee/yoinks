@@ -7,6 +7,8 @@ shown in the update window and on its GitHub release.
 
 ## [Unreleased]
 
+## [0.6.0] (2026-10-12)
+
 ### Added
 
 - Reorder the shelf: drag a tile up or down; a line shows where it will
