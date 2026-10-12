@@ -24,24 +24,36 @@ cp "target/$profile/yoinks" "$app/Contents/MacOS/yoinks"
 cp macos/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 sed "s/@VERSION@/$version/g" macos/Info.plist > "$app/Contents/Info.plist"
 
-# Debug builds are signed ad hoc. Release builds are signed with the
-# self-signed "Yoinks Release" certificate when it is in the keychain (as it
-# is in the release workflow), so macOS keeps permissions across updates;
-# ad-hoc signatures change with every build. SIGN_IDENTITY overrides this
-# ("-" for ad hoc).
+# Debug builds are signed ad hoc. Release builds are signed, in order of
+# preference, with a valid "Developer ID Application" identity (of team
+# YOINKS_TEAM_ID, if set), which scripts/dist.sh can notarize, or with the
+# self-signed "Yoinks Release" certificate. Either keeps macOS permissions
+# across updates; ad-hoc signatures change with every build. SIGN_IDENTITY
+# overrides this ("-" for ad hoc).
 release_identity="Yoinks Release"
 if [ -z "${SIGN_IDENTITY:-}" ]; then
     SIGN_IDENTITY=-
     if [ "$profile" = release ]; then
-        if security find-identity -p codesigning | grep -q "\"$release_identity\""; then
+        developer_id=$(security find-identity -v -p codesigning |
+            sed -n 's/.*"\(Developer ID Application: .*\)"$/\1/p' |
+            grep -F "${YOINKS_TEAM_ID:+($YOINKS_TEAM_ID)}" | head -n 1 || true)
+        if [ -n "$developer_id" ]; then
+            SIGN_IDENTITY=$developer_id
+        elif security find-identity -p codesigning | grep -q "\"$release_identity\""; then
             SIGN_IDENTITY=$release_identity
         else
-            echo "warning: \"$release_identity\" is not in the keychain; signing ad hoc" >&2
+            echo "warning: no Developer ID or \"$release_identity\" in the keychain; signing ad hoc" >&2
         fi
     fi
 fi
 if [ "$profile" = release ]; then
-    codesign --force --options runtime --timestamp=none --sign "$SIGN_IDENTITY" "$app"
+    # Hardened runtime, and a secure timestamp for a Developer ID: both are
+    # required for notarization.
+    case "$SIGN_IDENTITY" in
+        "Developer ID"*) timestamp=--timestamp ;;
+        *) timestamp=--timestamp=none ;;
+    esac
+    codesign --force --options runtime "$timestamp" --sign "$SIGN_IDENTITY" "$app"
 else
     codesign --force --sign "$SIGN_IDENTITY" "$app"
 fi

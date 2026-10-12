@@ -29,7 +29,7 @@ Spaces and full-screen apps.
 | Persistence | `serde` + `serde_json` | Stored under `~/Library/Application Support/Yoinks`; `rusqlite` only if history ever outgrows JSON |
 | Global hotkeys | Carbon `RegisterEventHotKey` via FFI | No Accessibility or Input Monitoring permission needed |
 | Logging | `eprintln!` to stderr | `tracing` + `tracing-oslog` (Console.app) remains an option |
-| Bundling | `scripts/bundle.sh` + `macos/Info.plist`, `scripts/make-dmg.sh`, `scripts/dist.sh` | Releases are built, signed with the self-signed "Yoinks Release" certificate and published by `.github/workflows/release.yml`; Developer ID signing and notarization still to do |
+| Bundling | `scripts/bundle.sh` + `macos/Info.plist`, `scripts/make-dmg.sh`, `scripts/dist.sh` | Releases are built, signed with a Developer ID, notarized and published by `.github/workflows/release.yml` |
 | Minimum OS | macOS 13 Ventura | Unlocks modern APIs (SMAppService, App Intents) |
 
 ## 3. Architecture
@@ -304,7 +304,7 @@ Key design points:
   available; without one, only the Share extension and Shortcuts actions
   could be tried, ad hoc and on one Mac.
 
-### Phase 10: Packaging and distribution (done except Developer ID signing)
+### Phase 10: Packaging and distribution (done except automatic updates)
 - [x] Apple Silicon only (decision 2026-10-10): no universal binary.
   `LSArchitecturePriority` is arm64.
 - [x] App icon drawn by `scripts/make-icon.swift` into `macos/AppIcon.icns`
@@ -324,10 +324,13 @@ Key design points:
   become pre-releases. First used for v0.1.3-beta.1. The certificate is in
   the login keychain and the repository secrets.
 - [x] README with install, usage, command line, settings and build steps.
-- To do, needs a Developer ID: switch release signing from the
-  self-signed certificate to a Developer ID, notarize with `notarytool`
-  and staple, in the release workflow. That removes the "Open Anyway" step
-  for people who download Yoinks.
+- [x] Developer ID signing and notarization (2026-10-12), set up like
+  CleanShotZ with the same team's certificate and App Store Connect key:
+  `bundle.sh` prefers a Developer ID (secure timestamp, hardened runtime),
+  and `dist.sh` notarizes the app with `notarytool`, staples it, then signs,
+  notarizes and staples the DMG. The release workflow imports the
+  certificate (plus Apple's G2 intermediate) and refuses to publish a DMG
+  that fails `stapler validate`. No more "Open Anyway" step.
 - To do after that: automatic updates with Sparkle (EdDSA-signed appcast,
   hosted on GitHub Releases, published by the release workflow).
 - Swift add-ons (Phase 9b) would be built and embedded here once signing
@@ -399,7 +402,7 @@ Key design points:
 | M2: Yoink parity core | 4, 5, 6 | Auto-appearing shelf, hotkey gestures, previews |
 | M3: Clipboard + settings | 7, 8 | Clipboard history and a full preferences window |
 | M4: Integrations | 9a (9b deferred) | CLI, URL scheme, Services, Continuity Camera |
-| M5: Ship | 10 | Releases built, signed (self-signed) and published by GitHub Actions; Developer ID signing and notarization pending |
+| M5: Ship | 10 | Releases built, signed with a Developer ID, notarized and published by GitHub Actions; automatic updates pending |
 | M6: Beyond Yoink | Section 5 | Selected improvements, prioritized after M5 |
 
 ## 8. Decisions and future options

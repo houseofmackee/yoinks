@@ -47,13 +47,13 @@ Requires macOS 13 or later on Apple Silicon.
 1. Download `Yoinks-<version>.dmg` from
    [Releases](https://github.com/houseofmackee/yoinks/releases) (the current
    pre-release is
-   [0.1.3-beta.1](https://github.com/houseofmackee/yoinks/releases/tag/v0.1.3-beta.1)), open
+   [0.2.0-beta.1](https://github.com/houseofmackee/yoinks/releases/tag/v0.2.0-beta.1)), open
    it and drag Yoinks into Applications. To build it yourself, see
    [Building](#building).
-2. Releases are signed with the project's self-signed "Yoinks Release"
-   certificate but not notarized, so macOS blocks the first launch.
-   Open Yoinks once, then go to System Settings > Privacy & Security and
-   choose **Open Anyway**.
+2. Releases after 0.2.0-beta.1 are signed with a Developer ID and notarized
+   by Apple, so Yoinks opens like any other app. Earlier releases were
+   self-signed: macOS blocks their first launch until you choose **Open
+   Anyway** in System Settings > Privacy & Security.
 
 Yoinks lives in the menu bar (the tray icon); it has no Dock icon. You can
 hide the menu bar icon in Preferences: the same menu (Preferences, Clipboard
@@ -133,8 +133,12 @@ swift scripts/make-icon.swift  # regenerate macos/AppIcon.icns
 
 `bundle.sh` registers the app with Launch Services so the link scheme and the
 service work during development (set `YOINKS_SKIP_REGISTER=1` to skip). Debug
-builds are signed ad hoc; release builds use the "Yoinks Release" certificate
-if it is in the keychain, otherwise ad hoc (`SIGN_IDENTITY` overrides).
+builds are signed ad hoc; release builds use a Developer ID Application
+identity if one is in the keychain (`YOINKS_TEAM_ID` picks the team), then
+the self-signed "Yoinks Release" certificate, otherwise ad hoc
+(`SIGN_IDENTITY` overrides). With a Developer ID, `dist.sh` also notarizes
+and staples the app and the DMG when `YOINKS_NOTARY_KEY` (the `.p8` path),
+`YOINKS_NOTARY_KEY_ID` and `YOINKS_NOTARY_ISSUER` are set.
 
 GitHub Actions runs `cargo fmt --check`, `cargo clippy -D warnings` (debug and
 release), `cargo test`, a release bundle build and `cargo deny check` (see
@@ -150,14 +154,15 @@ git tag v0.2.0 && git push origin master v0.2.0
 ```
 
 `.github/workflows/release.yml` checks the tag matches `Cargo.toml`, signs
-with the "Yoinks Release" certificate from the repository secrets
-`RELEASE_CERT_P12_BASE64` and `RELEASE_CERT_PASSWORD` (made once with
-`scripts/create-release-cert.sh`), runs `scripts/dist.sh` and publishes the
-DMG, zip and `SHA256SUMS.txt`. Tags with a hyphen (`v0.2.0-beta.1`) become
+with the Developer ID Application certificate from the repository secrets
+`DEVELOPER_ID_P12_BASE64` and `DEVELOPER_ID_P12_PASSWORD`, notarizes with
+the App Store Connect API key in `NOTARY_API_KEY_BASE64` (and the
+`APPLE_TEAM_ID`, `NOTARY_KEY_ID` and `NOTARY_ISSUER_ID` variables), runs
+`scripts/dist.sh` and publishes the DMG, zip and `SHA256SUMS.txt`. Keep
+backups of the `.p12` and `.p8` outside GitHub. Tags with a hyphen (`v0.2.0-beta.1`) become
 pre-releases. Do not create releases by hand with `gh release create`.
 
 ## Status
 
-See [PLAN.md](PLAN.md) for the roadmap. Still to do: Developer ID signing and
-notarization, automatic updates, and optional Swift add-ons (Share
-extension, Shortcuts actions, widget).
+See [PLAN.md](PLAN.md) for the roadmap. Still to do: automatic updates and
+optional Swift add-ons (Share extension, Shortcuts actions, widget).

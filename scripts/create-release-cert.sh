@@ -1,7 +1,11 @@
 #!/bin/sh
 # Creates the self-signed release signing identity, imports it into the
 # login keychain (so local release builds match CI), and exports it to
-# target/release-cert for the release workflow's secrets.
+# target/release-cert.
+#
+# Releases after 0.2.0-beta.1 are signed with a Developer ID instead; this
+# certificate remains for release builds on a Mac without an Apple
+# developer account (scripts/bundle.sh falls back to it).
 #
 # Run once per project, ever: every release must be signed with the same
 # certificate, because macOS ties permissions (Accessibility, Screen
