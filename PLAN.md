@@ -384,6 +384,12 @@ Key design points:
   preferences tab. The first real update over GitHub: the installed 0.3.0
   offered 0.4.0 with its changelog notes, then downloaded, verified,
   installed and relaunched it; the result is still notarized.
+- [x] v0.5.0 (2026-10-12): named shelves with color tags, Share, shake to
+  show, watched folders, the Share extension and Shortcuts actions. The
+  release workflow updated the Homebrew cask by itself for the first time,
+  and the installed 0.4.0 updated to it through Sparkle. CI had been
+  failing on its older macos-14 runner (App Intents metadata processor,
+  an incomplete cached Sparkle); it now runs on macos-15 like releases.
 - [x] Automatic updates with Sparkle 2.10 (2026-10-12), as in CleanShotZ:
   `scripts/sparkle.sh` downloads it at a pinned checksum, `bundle.sh`
   embeds it in release builds (no XPC services) with the feed URL and
@@ -446,6 +452,8 @@ Key design points:
 | Open source CLI + scripting | First-class CLI and JSON output for scripting (`yoinks list --json`) | Done (Phase 9a) |
 | Share menu | Send items with AirDrop, Mail, Messages and other share services | Done: right-click > Share (services listed directly; the share picker popover needs an active app) |
 | Shake to show | Shake the pointer mid-drag to bring up the shelf (as in Dropover) | Done: a choice under "Show the shelf during drags" |
+| Reorder tiles | Drag a tile up or down within the shelf | To do |
+| Drop on the menu bar icon | Drop items on the menu bar icon (or the notch area) to add them | To do |
 | Sensitive content redaction | Detect and skip likely secrets (API keys, tokens) in clipboard history | Done: known key formats, private keys, credential lines and random tokens are skipped (Preferences > Clipboard) |
 | Low-resource mode | Disable thumbnails and polling on battery power | Done: "Save energy on battery" (Preferences > General) slows clipboard and screenshot polling and skips new thumbnails on battery or in Low Power Mode |
 
@@ -484,17 +492,27 @@ Key design points:
   behind a trait so a sync backend (iCloud via CloudKit, or a shared folder)
   can be added later without reworking the model.
 
-## 9. What's left (as of v0.4.0, 2026-10-12)
+## 9. What's left (as of v0.5.0, 2026-10-12)
 
-**Features (section 5)**
+**Check on the installed app**
+- The Shortcuts actions in the Shortcuts app, and the App Shortcuts
+  phrases in Spotlight and Siri ("Show the Yoinks shelf"): only their
+  metadata and the bridge are tested so far.
+- The Share extension from real apps' Share menus (Safari, Photos, Mail);
+  it was tested through the share services API, not the menus.
+- Shake to show with a real drag (the detection has unit tests only).
+- Save energy on battery while actually on battery (only the power
+  source reading and the tick skipping are tested).
+
+**Features**
+- The widget (recent shelf items or clips). Needs an App Group with the
+  team and can only be tried from an installed, signed build.
 - Text snippet editing: edit a text clipping in place before dragging it
   out.
-
-**Swift add-ons (Phase 9b)**
-- The widget (recent shelf items or clips); the Share extension and
-  Shortcuts actions are done. It needs an App Group with the team.
-- Try the Shortcuts actions in the Shortcuts app once a release with
-  them is installed.
+- Ideas from the comparison with Dropover, Droppy and Dropzone:
+  reordering tiles by dragging them within the shelf; the menu bar icon
+  (or the notch area) as a drop target; custom actions on items (partly
+  covered by the Shortcuts actions and the command line).
 
 **Testing**
 - Integration tests for the CLI and IPC socket.
@@ -502,9 +520,11 @@ Key design points:
   Photos, Notes, full-screen apps, several displays, Spaces, Stage
   Manager, external volumes.
 - An Instruments pass for idle CPU and memory, now that the clipboard,
-  expiry and screenshot timers all run.
+  folder, expiry and power timers all run.
 
 **Deferred, low priority**
 - Dropping colors (Phase 2).
 - A "show in Dock" toggle and adjustable gesture timing (Phase 8).
-- Sharing shelves across Macs (section 8).
+- Cloud uploads with share links and syncing shelves across Macs
+  (section 8): both need a server or iCloud, and Yoinks otherwise makes
+  no network calls except the update check.
