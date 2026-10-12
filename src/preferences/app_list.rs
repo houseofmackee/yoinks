@@ -1,5 +1,6 @@
-//! An editable list of apps (by bundle id) with + and - buttons. "+" offers
-//! the apps that are currently running.
+//! An editable list with + and - buttons: of apps (by bundle id), where "+"
+//! offers the apps that are currently running, or of folders, where "+"
+//! opens a folder picker.
 
 use std::cell::{OnceCell, RefCell};
 
@@ -8,9 +9,10 @@ use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSApplicationActivationPolicy, NSBezelStyle, NSButton, NSControlTextEditingDelegate, NSImage,
-    NSImageView, NSLayoutAttribute, NSLayoutConstraint, NSMenu, NSMenuItem, NSScrollView,
-    NSStackView, NSTableColumn, NSTableView, NSTableViewDataSource, NSTableViewDelegate,
-    NSTableViewStyle, NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSWorkspace,
+    NSImageView, NSLayoutAttribute, NSLayoutConstraint, NSMenu, NSMenuItem, NSModalResponseOK,
+    NSOpenPanel, NSScrollView, NSStackView, NSTableColumn, NSTableView, NSTableViewDataSource,
+    NSTableViewDelegate, NSTableViewStyle, NSTextField, NSUserInterfaceLayoutOrientation, NSView,
+    NSWorkspace,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSFileManager, NSInteger, NSObject, NSObjectProtocol, NSPoint,
@@ -19,7 +21,15 @@ use objc2_foundation::{
 
 const ROW_HEIGHT: f64 = 24.0;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Apps,
+    Folders,
+}
+
 pub struct AppListIvars {
+    kind: Kind,
+    /// Bundle ids, or folder paths.
     bundle_ids: RefCell<Vec<String>>,
     on_change: Box<dyn Fn(Vec<String>)>,
     table: OnceCell<Retained<NSTableView>>,
@@ -39,6 +49,10 @@ define_class!(
     impl AppList {
         #[unsafe(method(showAddMenu:))]
         fn show_add_menu(&self, _sender: Option<&AnyObject>) {
+            if self.ivars().kind == Kind::Folders {
+                self.choose_folders();
+                return;
+            }
             let Some(button) = self.ivars().add.get() else { return };
             let menu = self.running_apps_menu();
             menu.popUpMenuPositioningItem_atLocation_inView(
@@ -104,7 +118,10 @@ define_class!(
             usize::try_from(row)
                 .ok()
                 .and_then(|row| ids.get(row))
-                .map(|id| app_row(self.mtm(), id))
+                .map(|id| match self.ivars().kind {
+                    Kind::Apps => app_row(self.mtm(), id),
+                    Kind::Folders => folder_row(self.mtm(), id),
+                })
         }
     }
 );
@@ -115,7 +132,26 @@ impl AppList {
         bundle_ids: Vec<String>,
         on_change: impl Fn(Vec<String>) + 'static,
     ) -> Retained<Self> {
+        Self::with_kind(mtm, Kind::Apps, bundle_ids, on_change)
+    }
+
+    /// A list of folder paths.
+    pub fn folders(
+        mtm: MainThreadMarker,
+        paths: Vec<String>,
+        on_change: impl Fn(Vec<String>) + 'static,
+    ) -> Retained<Self> {
+        Self::with_kind(mtm, Kind::Folders, paths, on_change)
+    }
+
+    fn with_kind(
+        mtm: MainThreadMarker,
+        kind: Kind,
+        bundle_ids: Vec<String>,
+        on_change: impl Fn(Vec<String>) + 'static,
+    ) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(AppListIvars {
+            kind,
             bundle_ids: RefCell::new(bundle_ids),
             on_change: Box::new(on_change),
             table: OnceCell::new(),
@@ -197,6 +233,36 @@ impl AppList {
         (self.ivars().on_change)(self.ivars().bundle_ids.borrow().clone());
     }
 
+    /// Asks for folders to add.
+    fn choose_folders(&self) {
+        let mtm = self.mtm();
+        let panel = NSOpenPanel::openPanel(mtm);
+        panel.setCanChooseFiles(false);
+        panel.setCanChooseDirectories(true);
+        panel.setAllowsMultipleSelection(true);
+        panel.setPrompt(Some(ns_string!("Watch")));
+        panel.setMessage(Some(ns_string!(
+            "New files and folders in these folders will be added to the shelf."
+        )));
+        // Preferences is a non-activating panel; bring the app forward so
+        // the picker gets the keyboard.
+        crate::ui::activate_app(mtm);
+        if panel.runModal() != NSModalResponseOK {
+            return;
+        }
+        {
+            let mut paths = self.ivars().bundle_ids.borrow_mut();
+            for url in panel.URLs().iter() {
+                if let Some(path) = url.path().map(|p| p.to_string())
+                    && !paths.contains(&path)
+                {
+                    paths.push(path);
+                }
+            }
+        }
+        self.changed();
+    }
+
     /// Regular (Dock) apps that are running and not yet listed.
     fn running_apps_menu(&self) -> Retained<NSMenu> {
         let mtm = self.mtm();
@@ -238,6 +304,22 @@ impl AppList {
     }
 }
 
+/// Folder icon and path, with `~` for the home folder.
+fn folder_row(mtm: MainThreadMarker, path: &str) -> Retained<NSView> {
+    let icon = NSWorkspace::sharedWorkspace().iconForFile(&NSString::from_str(path));
+    let home = std::env::home_dir();
+    let label = NSTextField::labelWithString(
+        &NSString::from_str(&crate::shelf::tilde(
+            std::path::Path::new(path),
+            home.as_deref(),
+        )),
+        mtm,
+    );
+    label.setLineBreakMode(objc2_app_kit::NSLineBreakMode::ByTruncatingMiddle);
+    label.setToolTip(Some(&NSString::from_str(path)));
+    icon_row(mtm, Some(icon), label)
+}
+
 /// App icon and name for a bundle id (the id itself if the app is not
 /// installed).
 fn app_row(mtm: MainThreadMarker, bundle_id: &str) -> Retained<NSView> {
@@ -251,6 +333,15 @@ fn app_row(mtm: MainThreadMarker, bundle_id: &str) -> Retained<NSView> {
     );
     let icon = path.as_ref().map(|path| workspace.iconForFile(path));
     let label = NSTextField::labelWithString(&name, mtm);
+    icon_row(mtm, icon, label)
+}
+
+/// A small icon next to a label.
+fn icon_row(
+    mtm: MainThreadMarker,
+    icon: Option<Retained<NSImage>>,
+    label: Retained<NSTextField>,
+) -> Retained<NSView> {
     let mut views: Vec<Retained<NSView>> = Vec::new();
     if let Some(icon) = icon {
         let image = NSImageView::imageViewWithImage(&icon, mtm);

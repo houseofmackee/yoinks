@@ -39,6 +39,14 @@ Requires macOS 13 or later on Apple Silicon.
   land on the shelf as new items; the originals are never changed.
 - **Pinning.** Pinned items stay on the shelf after you drag them out and
   survive Clear Shelf.
+- **Named shelves** with Finder-style color tags, for keeping things
+  apart (for example "Invoices" and "Design"); switch from the menu or
+  with ⌘1 to ⌘9. A shelf can be tinted with its color.
+- **Share** a tile with AirDrop, Mail, Messages and other share services.
+- **Shake to show** the shelf while dragging, if you prefer it to
+  appearing on its own.
+- **Watched folders**: new files in folders you pick (say, Downloads)
+  land on the shelf once they have finished downloading.
 - **Screenshots and auto-expiry** (both optional): new screenshots and
   screen recordings appear on the shelf, and unpinned items can be removed
   after an hour, a day, a week or 30 days.
@@ -101,6 +109,8 @@ of the shelf, and opening Yoinks again brings up the shelf.
 | Get the text out of an image | Right-click > Copy Text |
 | Paste onto the shelf | Click the shelf and press ⌘V |
 | Find something on the shelf | Click the shelf and start typing, or press ⌘F; Escape ends the search |
+| Send it somewhere | Right-click > Share > AirDrop, Mail, Messages, ... |
+| Keep things apart | Menu > Shelves > New Shelf…; switch with ⌘1 to ⌘9 on the shelf |
 | Move the shelf | Drag its background (between or below the tiles) |
 | Put it back at the edge | Menu bar or gear > Move Shelf Back to Edge |
 | Clipboard history | Menu bar (or the shelf's gear) > Clipboard History… (type to search, Return copies) |

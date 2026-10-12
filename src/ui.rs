@@ -77,3 +77,31 @@ pub fn install_edit_menu(mtm: MainThreadMarker) {
     main.addItem(&edit_item);
     objc2_app_kit::NSApplication::sharedApplication(mtm).setMainMenu(Some(&main));
 }
+
+/// The system color for a Finder-style color tag.
+pub fn tag_color(color: crate::shelf::TagColor) -> Retained<objc2_app_kit::NSColor> {
+    use crate::shelf::TagColor;
+    use objc2_app_kit::NSColor;
+    match color {
+        TagColor::Red => NSColor::systemRedColor(),
+        TagColor::Orange => NSColor::systemOrangeColor(),
+        TagColor::Yellow => NSColor::systemYellowColor(),
+        TagColor::Green => NSColor::systemGreenColor(),
+        TagColor::Blue => NSColor::systemBlueColor(),
+        TagColor::Purple => NSColor::systemPurpleColor(),
+        TagColor::Gray => NSColor::systemGrayColor(),
+    }
+}
+
+/// A filled circle in a tag's color, for menus.
+pub fn tag_dot(color: crate::shelf::TagColor) -> Option<Retained<objc2_app_kit::NSImage>> {
+    use objc2_app_kit::{NSImage, NSImageSymbolConfiguration};
+    let symbol = NSImage::imageWithSystemSymbolName_accessibilityDescription(
+        objc2_foundation::ns_string!("circle.fill"),
+        Some(&NSString::from_str(color.label())),
+    )?;
+    let palette = NSImageSymbolConfiguration::configurationWithPaletteColors(
+        &objc2_foundation::NSArray::from_retained_slice(&[tag_color(color)]),
+    );
+    symbol.imageWithSymbolConfiguration(&palette)
+}

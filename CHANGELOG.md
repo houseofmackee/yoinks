@@ -11,6 +11,18 @@ shown in the update window and on its GitHub release.
 
 - Homebrew: `brew install --cask houseofmackee/tap/yoinks` installs the app
   and the `yoinks` command; full releases update the cask.
+- Named shelves: Shelves in the menu creates, renames, deletes and
+  switches between them (⌘1 to ⌘9 on the shelf too). Each can have a
+  Finder-style color tag, shown next to its name at the top of the shelf
+  and, optionally, as a tint of the shelf's background (Preferences >
+  Shelf).
+- Share: right-click a tile to send it with AirDrop, Mail, Messages,
+  Notes and the other share services.
+- Shake to show: a new "When you shake the pointer" choice for showing the
+  shelf during drags (Preferences > Shelf).
+- Watched folders: new files and folders in the folders you pick (for
+  example Downloads) are added to the shelf once they have finished
+  copying or downloading (Preferences > Shelf).
 
 ## [0.4.0] (2026-10-12)
 

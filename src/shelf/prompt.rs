@@ -1,4 +1,5 @@
-//! A small "Rename" prompt: a text field with Rename and Cancel. It is a
+//! A small prompt for a name: a text field with a confirm button and
+//! Cancel, used for renaming items and naming shelves. It is a
 //! non-activating panel, like the shelf, so it takes typing without
 //! bringing Yoinks to the front.
 
@@ -85,12 +86,26 @@ define_class!(
 );
 
 impl RenamePrompt {
-    /// Shows the prompt near `anchor` with `current` filled in; the part of
-    /// the name before the extension is selected, like Finder.
+    /// Shows the Rename prompt near `anchor` with the file name `current`
+    /// filled in; the part before the extension is selected, like Finder.
     pub fn show(
         mtm: MainThreadMarker,
         anchor: &NSView,
         current: &str,
+        submit: impl Fn(&str) -> Result<(), String> + 'static,
+    ) {
+        Self::ask(mtm, anchor, "Rename", "Rename", current, true, submit);
+    }
+
+    /// Shows a prompt titled `title` with a `button` to confirm and `current`
+    /// filled in: the stem selected if `file_name`, else all of it.
+    pub fn ask(
+        mtm: MainThreadMarker,
+        anchor: &NSView,
+        title: &str,
+        button: &str,
+        current: &str,
+        file_name: bool,
         submit: impl Fn(&str) -> Result<(), String> + 'static,
     ) {
         let this = Self::alloc(mtm).set_ivars(PromptIvars {
@@ -102,7 +117,7 @@ impl RenamePrompt {
         });
         // SAFETY: NSObject's `init` has the correct signature.
         let this: Retained<Self> = unsafe { msg_send![super(this), init] };
-        this.build(current);
+        this.build(title, button, current);
         *this.ivars().this.borrow_mut() = Some(this.clone());
 
         let (Some(panel), Some(field)) = (this.ivars().panel.get(), this.ivars().field.get())
@@ -133,11 +148,14 @@ impl RenamePrompt {
         panel.orderFrontRegardless();
         panel.makeKeyWindow();
         panel.makeFirstResponder(Some(field));
-        let stem_len = std::path::Path::new(current)
-            .file_stem()
-            .map_or(current.len(), |stem| {
-                stem.to_string_lossy().encode_utf16().count()
-            });
+        let whole = current.encode_utf16().count();
+        let stem_len = if file_name {
+            std::path::Path::new(current)
+                .file_stem()
+                .map_or(whole, |stem| stem.to_string_lossy().encode_utf16().count())
+        } else {
+            whole
+        };
         if let Some(editor) = field.currentEditor() {
             editor.setSelectedRange(NSRange::new(0, stem_len));
         }
@@ -181,7 +199,7 @@ impl RenamePrompt {
         self.ivars().this.borrow_mut().take();
     }
 
-    fn build(&self, current: &str) {
+    fn build(&self, title: &str, button: &str, current: &str) {
         let mtm = self.mtm();
         let target = Some::<&AnyObject>(self.as_ref());
         let field = NSTextField::textFieldWithString(&NSString::from_str(current), mtm);
@@ -201,7 +219,7 @@ impl RenamePrompt {
                     mtm,
                 ),
                 NSButton::buttonWithTitle_target_action(
-                    ns_string!("Rename"),
+                    &NSString::from_str(button),
                     target,
                     Some(sel!(confirm:)),
                     mtm,
@@ -268,7 +286,7 @@ impl RenamePrompt {
         unsafe { panel.setReleasedWhenClosed(false) };
         panel.setLevel(NSStatusWindowLevel);
         panel.setHidesOnDeactivate(false);
-        panel.setTitle(ns_string!("Rename"));
+        panel.setTitle(&NSString::from_str(title));
         panel.setContentView(Some(&content));
         let fitted = content.fittingSize();
         panel.setContentSize(fitted);

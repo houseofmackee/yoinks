@@ -4,7 +4,7 @@
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +24,8 @@ pub enum AppearMode {
     NearEdge,
     /// Appear next to the cursor.
     AtCursor,
+    /// Appear next to the cursor when the pointer is shaken mid-drag.
+    OnShake,
 }
 
 /// Where the user dragged the shelf to: the bottom-left corner of the shelf
@@ -71,6 +73,10 @@ pub struct Settings {
     pub shelf_expiry_hours: Option<u32>,
     /// Add new screenshots and screen recordings to the shelf.
     pub add_screenshots: bool,
+    /// Tint the shelf's background with its color tag.
+    pub tint_shelf: bool,
+    /// Folders whose new files and folders are added to the shelf.
+    pub watched_folders: Vec<PathBuf>,
     /// On battery or in Low Power Mode, poll less often and make no new
     /// thumbnails.
     pub save_energy_on_battery: bool,
@@ -93,6 +99,8 @@ impl Default for Settings {
             clipboard_skip_secrets: true,
             shelf_expiry_hours: None,
             add_screenshots: false,
+            watched_folders: Vec::new(),
+            tint_shelf: true,
             save_energy_on_battery: false,
         }
     }

@@ -13,6 +13,7 @@ use dispatch2::{DispatchQueue, MainThreadBound};
 use block2::RcBlock;
 use objc2::AnyThread;
 use objc2::rc::Retained;
+use objc2::runtime::AnyObject;
 use objc2_app_kit::{NSAttributedStringAppKitDocumentFormats, NSPasteboard, NSWorkspace};
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSDictionary, NSError, NSOperationQueue, NSString, NSURL,
@@ -28,6 +29,7 @@ use super::materialize::ItemsDir;
 use super::ocr;
 use super::pasteboard::{self, Dropped};
 use super::recent::Recent;
+use super::shelves::{ShelfInfo, Shelves, TagColor};
 use super::store::{JsonFile, ShelfStore};
 use super::thumbnail::Thumbnails;
 use super::view::ShelfContentView;
@@ -35,7 +37,10 @@ use super::view::ShelfContentView;
 pub struct ShelfModel {
     /// Handed to views and background work that call back into the model.
     this: Weak<ShelfModel>,
+    /// The entries of the shelf that is showing.
     store: RefCell<ShelfStore>,
+    /// The named shelves and which one is showing.
+    shelves: RefCell<Shelves>,
     thumbnails: Thumbnails,
     items_dir: ItemsDir,
     view: Retained<ShelfContentView>,
@@ -43,6 +48,8 @@ pub struct ShelfModel {
     recent: RefCell<Recent>,
     /// Keep entries on the shelf after they are dragged out.
     keep_after_drag_out: Cell<bool>,
+    /// Tint the shelf's background with its color tag.
+    tint: Cell<bool>,
     /// Bumped on every change, so observers can tell whether anything
     /// happened between two points in time.
     revision: Cell<u64>,
@@ -52,28 +59,40 @@ impl ShelfModel {
     pub fn new(mtm: MainThreadMarker, data_dir: &Path) -> Rc<Self> {
         let items_dir = ItemsDir::new(data_dir.join("Items"));
         items_dir.clean_incoming();
-        let store = load_store(&data_dir.join("shelf.json"));
+        let shelves = Shelves::load(data_dir);
+        let store = load_store(&shelves.path(&shelves.current().id));
         let model = Rc::new_cyclic(|weak: &Weak<Self>| Self {
             this: weak.clone(),
             store: RefCell::new(store),
+            shelves: RefCell::new(shelves),
             thumbnails: Thumbnails::new(data_dir.join("Thumbnails")),
             items_dir,
             view: ShelfContentView::new(mtm, weak.clone()),
             recent: RefCell::default(),
             keep_after_drag_out: Cell::new(false),
+            tint: Cell::new(true),
             revision: Cell::new(0),
         });
         model
             .store
             .borrow_mut()
             .retain_map(|item| model.locate(item));
-        let live: HashSet<Uuid> = model
+        // Every shelf's items are kept, not just the one showing.
+        let mut live: HashSet<Uuid> = model
             .store
             .borrow()
             .entries()
             .iter()
             .flat_map(|entry| entry.items.iter().map(|item| item.id))
             .collect();
+        for entries in model.other_shelves().into_iter().map(|(_, store)| store) {
+            live.extend(
+                entries
+                    .entries()
+                    .iter()
+                    .flat_map(|entry| entry.items.iter().map(|item| item.id)),
+            );
+        }
         model.items_dir.remove_orphans(&live);
         model.thumbnails.remove_orphans(&live);
         model.reload();
@@ -99,6 +118,20 @@ impl ShelfModel {
 
     pub fn set_keep_after_drag_out(&self, keep: bool) {
         self.keep_after_drag_out.set(keep);
+    }
+
+    pub fn set_tint(&self, tint: bool) {
+        if self.tint.replace(tint) != tint {
+            self.reload();
+        }
+    }
+
+    /// The color to tint the shelf with, if any.
+    pub fn tint(&self) -> Option<TagColor> {
+        self.tint
+            .get()
+            .then(|| self.shelves.borrow().current().color)
+            .flatten()
     }
 
     /// The items to put on the pasteboard when entry `id` is dragged out, or
@@ -211,6 +244,27 @@ impl ShelfModel {
         general.setString_forType(&NSString::from_str(&lines.join("\n")), unsafe {
             objc2_app_kit::NSPasteboardTypeString
         })
+    }
+
+    /// What the Share menu shares: text as text, links as web links, and
+    /// files, images and rich text as files.
+    pub fn share_items(&self, id: Uuid) -> Vec<Retained<AnyObject>> {
+        self.ready_items(id)
+            .iter()
+            .filter_map(|item| -> Option<Retained<AnyObject>> {
+                match &item.kind {
+                    ItemKind::Text => {
+                        let text = fs::read_to_string(&item.path).ok()?;
+                        Some(NSString::from_str(&text).into())
+                    }
+                    ItemKind::Url { url } => {
+                        NSURL::URLWithString(&NSString::from_str(url)).map(Into::into)
+                    }
+                    ItemKind::Pending => None,
+                    _ => NSURL::from_file_path(&item.path).map(Into::into),
+                }
+            })
+            .collect()
     }
 
     /// URLs to hand to other apps (links as web links).
@@ -587,19 +641,110 @@ impl ShelfModel {
         }
     }
 
-    /// Removes unpinned entries older than `max_age`.
+    /// Removes unpinned entries older than `max_age`, on every shelf.
     pub fn expire(&self, max_age: std::time::Duration) {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
-        let removed = self
-            .store
-            .borrow_mut()
-            .expire(now.saturating_sub(max_age.as_secs()));
+        let cutoff = now.saturating_sub(max_age.as_secs());
+        for (_, mut store) in self.other_shelves() {
+            let removed = store.expire(cutoff);
+            self.delete_files(&removed);
+        }
+        let removed = self.store.borrow_mut().expire(cutoff);
         if !removed.is_empty() {
             self.delete_files(&removed);
             self.reload();
         }
+    }
+
+    /// The named shelves, in menu order.
+    pub fn shelves(&self) -> Vec<ShelfInfo> {
+        self.shelves.borrow().list().to_vec()
+    }
+
+    pub fn current_shelf(&self) -> ShelfInfo {
+        self.shelves.borrow().current().clone()
+    }
+
+    /// Shows another shelf. False if it does not exist.
+    pub fn switch_shelf(&self, id: &str) -> bool {
+        if self.shelves.borrow().current().id == id {
+            return true;
+        }
+        if !self.shelves.borrow_mut().set_current(id) {
+            return false;
+        }
+        let path = self.shelves.borrow().path(id);
+        *self.store.borrow_mut() = load_store(&path);
+        self.store.borrow_mut().retain_map(|item| self.locate(item));
+        self.view.end_search();
+        self.reload();
+        true
+    }
+
+    /// Adds a shelf and shows it.
+    pub fn add_shelf(&self, name: &str) -> Result<(), String> {
+        let id = self.shelves.borrow_mut().add(name)?;
+        self.switch_shelf(&id);
+        Ok(())
+    }
+
+    pub fn rename_shelf(&self, id: &str, name: &str) -> Result<(), String> {
+        self.shelves.borrow_mut().rename(id, name)?;
+        self.reload();
+        Ok(())
+    }
+
+    /// Deletes a shelf and its entries (files Yoinks saved; the user's own
+    /// files stay where they are). The first shelf cannot be deleted.
+    pub fn delete_shelf(&self, id: &str) -> Result<(), String> {
+        let current = self.shelves.borrow().current().id == id;
+        let entries: Vec<Entry> = if current {
+            self.store.borrow().entries().to_vec()
+        } else {
+            load_store(&self.shelves.borrow().path(id))
+                .entries()
+                .to_vec()
+        };
+        self.shelves.borrow_mut().remove(id)?;
+        self.delete_files(&entries);
+        if current {
+            let path = self
+                .shelves
+                .borrow()
+                .path(&self.shelves.borrow().current().id);
+            *self.store.borrow_mut() = load_store(&path);
+            self.view.end_search();
+        }
+        self.reload();
+        Ok(())
+    }
+
+    pub fn set_shelf_color(&self, id: &str, color: Option<TagColor>) {
+        if self.shelves.borrow_mut().set_color(id, color) {
+            self.reload();
+        }
+    }
+
+    /// How many entries a shelf holds.
+    pub fn shelf_len(&self, id: &str) -> usize {
+        if self.shelves.borrow().current().id == id {
+            return self.store.borrow().entries().len();
+        }
+        load_store(&self.shelves.borrow().path(id)).entries().len()
+    }
+
+    /// The shelves that are not showing, loaded from disk.
+    fn other_shelves(&self) -> Vec<(ShelfInfo, ShelfStore)> {
+        let shelves = self.shelves.borrow();
+        let current = shelves.current().id.clone();
+        shelves
+            .list()
+            .iter()
+            .filter(|shelf| shelf.id != current)
+            .map(|shelf| (shelf.clone(), load_store(&shelves.path(&shelf.id))))
+            .collect()
     }
 
     pub fn clear(&self) {

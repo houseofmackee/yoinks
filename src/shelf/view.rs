@@ -91,7 +91,13 @@ pub struct ContentIvars {
     /// Shown at the top while searching (⌘F or typing on the shelf).
     search: Retained<NSSearchField>,
     query: RefCell<Option<Query>>,
-    /// The tiles' top edge: at the shelf's top, or below the search field.
+    /// The shelf's name, shown at the top when there are several shelves.
+    title: Retained<NSTextField>,
+    /// A wash of the shelf's tag color behind everything else.
+    tint: Retained<NSView>,
+    /// Holds the name and the search field; stack views drop hidden views.
+    header: Retained<NSStackView>,
+    /// The tiles' top edge: at the shelf's top, or below the header.
     scroll_top: OnceCell<[Retained<NSLayoutConstraint>; 2]>,
 }
 
@@ -469,6 +475,20 @@ impl ShelfContentView {
         search.setPlaceholderString(Some(ns_string!("Search")));
         search.setSendsSearchStringImmediately(true);
         search.setHidden(true);
+        let title = NSTextField::labelWithString(ns_string!(""), mtm);
+        title.setFont(Some(&objc2_app_kit::NSFont::boldSystemFontOfSize(11.0)));
+        title.setTextColor(Some(&NSColor::secondaryLabelColor()));
+        title.setAlignment(NSTextAlignment::Center);
+        title.setLineBreakMode(objc2_app_kit::NSLineBreakMode::ByTruncatingTail);
+        title.setHidden(true);
+        let header = NSStackView::stackViewWithViews(
+            &NSArray::from_slice(&[&*title as &NSView, &*search]),
+            mtm,
+        );
+        header.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
+        header.setAlignment(NSLayoutAttribute::CenterX);
+        header.setSpacing(4.0);
+        header.setHidden(true);
 
         let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(112.0, 200.0));
         let this = Self::alloc(mtm).set_ivars(ContentIvars {
@@ -484,6 +504,9 @@ impl ShelfContentView {
             scroll: OnceCell::new(),
             search,
             query: RefCell::new(None),
+            title,
+            tint: NSView::new(mtm),
+            header,
             scroll_top: OnceCell::new(),
         });
         // SAFETY: `initWithFrame:` is NSView's designated initializer.
@@ -530,10 +553,13 @@ impl ShelfContentView {
         scroll.setHasVerticalScroller(true);
         scroll.setAutohidesScrollers(true);
         scroll.setDocumentView(Some(&document));
+        ivars.tint.setWantsLayer(true);
+        ivars.tint.setHidden(true);
+        self.addSubview(&ivars.tint);
         self.addSubview(&scroll);
         self.addSubview(&ivars.placeholder);
         self.addSubview(&ivars.menu_button);
-        self.addSubview(&ivars.search);
+        self.addSubview(&ivars.header);
         // SAFETY: Actions take one sender argument; we outlive the field.
         unsafe {
             ivars.search.setTarget(Some(self.as_ref()));
@@ -544,13 +570,14 @@ impl ShelfContentView {
         }
 
         let clip = scroll.contentView();
-        let views: [&NSView; 6] = [
+        let views: [&NSView; 7] = [
             &scroll,
             &document,
             &ivars.list,
             &ivars.placeholder,
             &ivars.menu_button,
-            &ivars.search,
+            &ivars.header,
+            &ivars.tint,
         ];
         for view in views {
             view.setTranslatesAutoresizingMaskIntoConstraints(false);
@@ -558,24 +585,48 @@ impl ShelfContentView {
         let top = scroll
             .topAnchor()
             .constraintEqualToAnchor(&self.topAnchor());
-        let below_search = scroll
+        let below_header = scroll
             .topAnchor()
-            .constraintEqualToAnchor_constant(&ivars.search.bottomAnchor(), 4.0);
-        let _ = ivars.scroll_top.set([top.clone(), below_search]);
+            .constraintEqualToAnchor_constant(&ivars.header.bottomAnchor(), 4.0);
+        let _ = ivars.scroll_top.set([top.clone(), below_header]);
         NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[
             top,
             ivars
-                .search
+                .tint
+                .topAnchor()
+                .constraintEqualToAnchor(&self.topAnchor()),
+            ivars
+                .tint
+                .bottomAnchor()
+                .constraintEqualToAnchor(&self.bottomAnchor()),
+            ivars
+                .tint
+                .leadingAnchor()
+                .constraintEqualToAnchor(&self.leadingAnchor()),
+            ivars
+                .tint
+                .trailingAnchor()
+                .constraintEqualToAnchor(&self.trailingAnchor()),
+            ivars
+                .header
                 .topAnchor()
                 .constraintEqualToAnchor_constant(&self.topAnchor(), 8.0),
             ivars
-                .search
+                .header
                 .leadingAnchor()
                 .constraintEqualToAnchor_constant(&self.leadingAnchor(), 8.0),
             ivars
-                .search
+                .header
                 .trailingAnchor()
                 .constraintEqualToAnchor_constant(&self.trailingAnchor(), -8.0),
+            ivars
+                .search
+                .widthAnchor()
+                .constraintEqualToAnchor(&ivars.header.widthAnchor()),
+            ivars
+                .title
+                .widthAnchor()
+                .constraintEqualToAnchor(&ivars.header.widthAnchor()),
             scroll
                 .bottomAnchor()
                 .constraintEqualToAnchor_constant(&ivars.menu_button.topAnchor(), -2.0),
@@ -672,6 +723,22 @@ impl ShelfContentView {
             ns_string!("Drop items here")
         });
         ivars.placeholder.setHidden(!entries.is_empty());
+        // The shelf's name (with its color tag), once there is more than one
+        // shelf or it has a color.
+        let current = model.current_shelf();
+        ivars
+            .title
+            .setHidden(model.shelves().len() < 2 && current.color.is_none());
+        ivars.title.setAttributedStringValue(&shelf_title(&current));
+        // The tag color as a light wash, if the shelf has one and tinting is
+        // on in Preferences.
+        let tint = model.tint();
+        ivars.tint.setHidden(tint.is_none());
+        if let (Some(color), Some(layer)) = (tint, ivars.tint.layer()) {
+            let wash = crate::ui::tag_color(color).colorWithAlphaComponent(0.22);
+            layer.setBackgroundColor(Some(&wash.CGColor()));
+        }
+        self.update_header();
         self.notify(ViewEvent::Changed);
         *ivars.order.borrow_mut() = entries.iter().map(|entry| entry.id).collect();
         let selected = ivars
@@ -714,11 +781,8 @@ impl ShelfContentView {
     /// Shows the search field with `text` in it and puts the cursor there.
     pub fn begin_search(&self, text: &str) {
         let ivars = self.ivars();
-        if let Some([top, below_search]) = ivars.scroll_top.get() {
-            top.setActive(false);
-            below_search.setActive(true);
-        }
         ivars.search.setHidden(false);
+        self.update_header();
         if !text.is_empty() {
             ivars.search.setStringValue(&NSString::from_str(text));
         }
@@ -750,15 +814,29 @@ impl ShelfContentView {
             });
         ivars.search.setStringValue(ns_string!(""));
         ivars.search.setHidden(true);
-        if let Some([top, below_search]) = ivars.scroll_top.get() {
-            below_search.setActive(false);
-            top.setActive(true);
-        }
+        self.update_header();
         if ivars.query.borrow_mut().take().is_some() {
             self.refilter();
         }
         if focused && let Some(window) = self.window() {
             window.makeFirstResponder(Some(self));
+        }
+    }
+
+    /// Shows the header (name, search field) if either is showing, and
+    /// moves the tiles below it.
+    fn update_header(&self) {
+        let ivars = self.ivars();
+        let visible = !ivars.title.isHidden() || !ivars.search.isHidden();
+        ivars.header.setHidden(!visible);
+        if let Some([top, below_header]) = ivars.scroll_top.get() {
+            if visible {
+                top.setActive(false);
+                below_header.setActive(true);
+            } else {
+                below_header.setActive(false);
+                top.setActive(true);
+            }
         }
     }
 
@@ -778,6 +856,18 @@ impl ShelfContentView {
         if flags.contains(NSEventModifierFlags::Command) {
             if chars.eq_ignore_ascii_case("f") {
                 self.begin_search("");
+                return true;
+            }
+            // ⌘1 to ⌘9 show the first nine shelves.
+            if let Ok(number @ 1..=9) = chars.parse::<usize>()
+                && let Some(model) = self.ivars().model.upgrade()
+            {
+                match model.shelves().get(number - 1) {
+                    Some(shelf) => {
+                        model.switch_shelf(&shelf.id);
+                    }
+                    None => NSBeep(),
+                }
                 return true;
             }
             return false;
@@ -1022,4 +1112,54 @@ impl FlippedView {
         // SAFETY: `FlippedView` has no ivars; NSView's `init` is fine.
         unsafe { msg_send![Self::alloc(mtm), init] }
     }
+}
+
+/// "● Name" with the dot in the shelf's tag color, or just the name.
+fn shelf_title(shelf: &super::ShelfInfo) -> Retained<objc2_foundation::NSAttributedString> {
+    use objc2_foundation::{NSMutableAttributedString, NSRange};
+    let text = match shelf.color {
+        Some(_) => format!("● {}", shelf.name),
+        None => shelf.name.clone(),
+    };
+    let title = NSMutableAttributedString::from_nsstring(&NSString::from_str(&text));
+    let all = NSRange::new(0, title.length());
+    let paragraph = objc2_app_kit::NSMutableParagraphStyle::new();
+    paragraph.setAlignment(NSTextAlignment::Center);
+    paragraph.setLineBreakMode(objc2_app_kit::NSLineBreakMode::ByTruncatingTail);
+    // SAFETY: Each value has the type its attribute expects, and the font
+    // weight is an immutable framework constant.
+    unsafe {
+        title.addAttribute_value_range(
+            objc2_app_kit::NSFontAttributeName,
+            &objc2_app_kit::NSFont::systemFontOfSize_weight(
+                12.0,
+                objc2_app_kit::NSFontWeightSemibold,
+            ),
+            all,
+        );
+        // Full label color: the secondary gray washes out on the
+        // translucent shelf.
+        title.addAttribute_value_range(
+            objc2_app_kit::NSForegroundColorAttributeName,
+            &NSColor::labelColor(),
+            all,
+        );
+        title.addAttribute_value_range(
+            objc2_app_kit::NSParagraphStyleAttributeName,
+            &paragraph,
+            all,
+        );
+    }
+    if let Some(color) = shelf.color {
+        // SAFETY: A color is the right value for the foreground attribute,
+        // and the range covers the dot.
+        unsafe {
+            title.addAttribute_value_range(
+                objc2_app_kit::NSForegroundColorAttributeName,
+                &crate::ui::tag_color(color),
+                NSRange::new(0, 1),
+            );
+        }
+    }
+    Retained::into_super(title)
 }

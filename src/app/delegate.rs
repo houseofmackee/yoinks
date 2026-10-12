@@ -22,14 +22,15 @@ use objc2_foundation::{
 use super::{commands, status_item};
 use crate::clipboard::{ClipboardHistory, HistoryList};
 use crate::drag::DragMonitor;
+use crate::folders::{Folder, FolderWatcher};
 use crate::hotkey::{Gesture, HotKey};
 use crate::ipc::{self, Request, server};
 use crate::paths;
 use crate::preferences::{PreferencesHooks, PreferencesWindow};
-use crate::screenshots::ScreenshotWatcher;
 use crate::settings::Settings;
 use crate::settings::ShelfPosition;
-use crate::shelf::{HIDE_AFTER_ADD, Shelf, ShelfModel, read_pasteboard};
+use crate::shelf::prompt::RenamePrompt;
+use crate::shelf::{DEFAULT_SHELF, HIDE_AFTER_ADD, Shelf, ShelfModel, TagColor, read_pasteboard};
 
 #[derive(Default)]
 pub struct Ivars {
@@ -48,8 +49,8 @@ pub struct Ivars {
     expiry_timer: OnceCell<Retained<NSTimer>>,
     /// Re-reads the power state for `save_energy_on_battery`.
     power_timer: OnceCell<Retained<NSTimer>>,
-    /// Running while `add_screenshots` is on.
-    screenshots: RefCell<Option<Rc<ScreenshotWatcher>>>,
+    /// Running while `add_screenshots` is on or folders are watched.
+    folders: RefCell<Option<Rc<FolderWatcher>>>,
 }
 
 /// How often expired entries are looked for, in seconds.
@@ -79,6 +80,7 @@ define_class!(
             let settings = Settings::load(&data_dir.join("settings.json"));
             let model = ShelfModel::new(mtm, &data_dir);
             model.set_keep_after_drag_out(settings.keep_after_drag_out);
+            model.set_tint(settings.tint_shelf);
             let shelf = Shelf::new(mtm, settings.shelf_edge, model);
             shelf.set_hide_after_use(settings.hide_after_use);
             shelf.set_custom_origin(settings.shelf_position.map(|p| NSPoint::new(p.x, p.y)));
@@ -124,7 +126,13 @@ define_class!(
             };
             let _ = ivars
                 .status_item
-                .set(status_item::build(mtm, self, shortcut.as_ref(), show_icon));
+                .set(status_item::build(
+                    mtm,
+                    self,
+                    shortcut.as_ref(),
+                    &self.shelf().model().shelves(),
+                    show_icon,
+                ));
             // Remember where the user drags the shelf.
             let mover = objc2::rc::Weak::new(self);
             self.shelf().set_on_moved(move |origin| {
@@ -144,7 +152,7 @@ define_class!(
             self.start_expiry_timer();
             self.start_power_timer();
             self.expire_entries();
-            self.update_screenshot_watcher();
+            self.update_folder_watcher();
         }
 
         // Files opened with Yoinks go on the shelf (one stack); `yoinks://`
@@ -211,6 +219,25 @@ define_class!(
                 };
                 item.setTitle(&NSString::from_str(&title));
                 available
+            } else if action == Some(sel!(switchShelf:)) {
+                let current = model.current_shelf().id;
+                let id = item
+                    .representedObject()
+                    .and_then(|object| object.downcast::<NSString>().ok())
+                    .map(|id| id.to_string());
+                let on = id.as_deref() == Some(current.as_str());
+                item.setState(if on { NSControlStateValueOn } else { NSControlStateValueOff });
+                true
+            } else if action == Some(sel!(setShelfColor:)) {
+                let tag = model
+                    .current_shelf()
+                    .color
+                    .and_then(|color| TagColor::ALL.iter().position(|c| *c == color))
+                    .map_or(0, |index| index as isize + 1);
+                item.setState(if item.tag() == tag { NSControlStateValueOn } else { NSControlStateValueOff });
+                true
+            } else if action == Some(sel!(deleteShelf:)) {
+                model.current_shelf().id != DEFAULT_SHELF
             } else if action == Some(sel!(searchShelf:)) {
                 !model.is_empty()
             } else if action == Some(sel!(clearShelf:)) {
@@ -241,6 +268,56 @@ define_class!(
         #[unsafe(method(recallItems:))]
         fn recall_items(&self, _sender: Option<&AnyObject>) {
             on_gesture(self.shelf(), Gesture::LongPress);
+        }
+
+        #[unsafe(method(switchShelf:))]
+        fn switch_shelf(&self, sender: Option<&NSMenuItem>) {
+            let id = sender
+                .and_then(|item| item.representedObject())
+                .and_then(|object| object.downcast::<NSString>().ok())
+                .map(|id| id.to_string());
+            if let Some(id) = id {
+                self.shelf().model().switch_shelf(&id);
+                self.shelf().show();
+            }
+        }
+
+        #[unsafe(method(newShelf:))]
+        fn new_shelf(&self, _sender: Option<&AnyObject>) {
+            self.ask_shelf_name("New Shelf", "Create", "", |model, name| model.add_shelf(name));
+        }
+
+        #[unsafe(method(renameShelf:))]
+        fn rename_shelf(&self, _sender: Option<&AnyObject>) {
+            let current = self.shelf().model().current_shelf();
+            self.ask_shelf_name("Rename Shelf", "Rename", &current.name, move |model, name| {
+                model.rename_shelf(&current.id, name)
+            });
+        }
+
+        #[unsafe(method(setShelfColor:))]
+        fn set_shelf_color(&self, sender: Option<&NSMenuItem>) {
+            let tag = sender.map_or(0, |item| item.tag());
+            let color = usize::try_from(tag - 1).ok().and_then(|i| TagColor::ALL.get(i).copied());
+            let model = self.shelf().model();
+            model.set_shelf_color(&model.current_shelf().id, color);
+            self.refresh_menu();
+            self.shelf().show();
+        }
+
+        #[unsafe(method(deleteShelf:))]
+        fn delete_shelf(&self, _sender: Option<&AnyObject>) {
+            let model = Rc::clone(self.shelf().model());
+            let shelf = model.current_shelf();
+            let count = model.shelf_len(&shelf.id);
+            if count > 0 && !confirm_delete(self.mtm(), &shelf.name, count) {
+                return;
+            }
+            if let Err(error) = model.delete_shelf(&shelf.id) {
+                eprintln!("yoinks: {error}");
+                NSBeep();
+            }
+            self.refresh_menu();
         }
 
         #[unsafe(method(searchShelf:))]
@@ -338,10 +415,62 @@ impl AppDelegate {
         }
     }
 
+    /// Rebuilds the menu bar icon's menu after the shelves changed.
+    fn refresh_menu(&self) {
+        if let Some(item) = self.ivars().status_item.get() {
+            let shortcut = self.ivars().settings.borrow().shortcut();
+            status_item::rebuild_menu(
+                self.mtm(),
+                item,
+                self,
+                shortcut.as_ref(),
+                &self.shelf().model().shelves(),
+            );
+        }
+    }
+
+    /// Shows the shelf and asks for a shelf name beside it; `apply` uses
+    /// it or says why it can't.
+    fn ask_shelf_name(
+        &self,
+        title: &str,
+        button: &str,
+        current: &str,
+        apply: impl Fn(&ShelfModel, &str) -> Result<(), String> + 'static,
+    ) {
+        let shelf = self.shelf();
+        shelf.show();
+        let model = Rc::downgrade(shelf.model());
+        let weak = objc2::rc::Weak::new(self);
+        RenamePrompt::ask(
+            self.mtm(),
+            shelf.menu_button(),
+            title,
+            button,
+            current,
+            false,
+            move |name| {
+                let Some(model) = model.upgrade() else {
+                    return Ok(());
+                };
+                apply(&model, name)?;
+                if let Some(delegate) = weak.load() {
+                    delegate.refresh_menu();
+                }
+                Ok(())
+            },
+        );
+    }
+
     /// The app menu with the current shortcut, for the shelf's gear button.
     fn app_menu(&self) -> Retained<NSMenu> {
         let shortcut = self.ivars().settings.borrow().shortcut();
-        status_item::menu(self.mtm(), self, shortcut.as_ref())
+        status_item::menu(
+            self.mtm(),
+            self,
+            shortcut.as_ref(),
+            &self.shelf().model().shelves(),
+        )
     }
 
     fn shelf(&self) -> &Rc<Shelf> {
@@ -383,6 +512,7 @@ impl AppDelegate {
         shelf
             .model()
             .set_keep_after_drag_out(settings.keep_after_drag_out);
+        shelf.model().set_tint(settings.tint_shelf);
         if let Some(monitor) = ivars.drag_monitor.get() {
             monitor.update(&settings);
         }
@@ -398,15 +528,23 @@ impl AppDelegate {
         if old.save_energy_on_battery != settings.save_energy_on_battery {
             self.update_power();
         }
-        if old.add_screenshots != settings.add_screenshots {
-            self.update_screenshot_watcher();
+        if old.add_screenshots != settings.add_screenshots
+            || old.watched_folders != settings.watched_folders
+        {
+            self.update_folder_watcher();
         }
         if old.hotkey == settings.hotkey {
             return Ok(());
         }
         let result = self.register_hotkey();
         if let Some(item) = ivars.status_item.get() {
-            status_item::rebuild_menu(self.mtm(), item, self, settings.shortcut().as_ref());
+            status_item::rebuild_menu(
+                self.mtm(),
+                item,
+                self,
+                settings.shortcut().as_ref(),
+                &self.shelf().model().shelves(),
+            );
         }
         result
     }
@@ -459,16 +597,24 @@ impl AppDelegate {
         }
     }
 
-    /// Starts or stops watching for screenshots to match `add_screenshots`.
-    fn update_screenshot_watcher(&self) {
+    /// (Re)starts watching folders to match `add_screenshots` and
+    /// `watched_folders`; stops when there is nothing to watch.
+    fn update_folder_watcher(&self) {
         let ivars = self.ivars();
-        let on = ivars.settings.borrow().add_screenshots;
-        let mut watcher = ivars.screenshots.borrow_mut();
-        if !on {
-            watcher.take();
-        } else if watcher.is_none() {
+        let folders: Vec<Folder> = {
+            let settings = ivars.settings.borrow();
+            settings
+                .add_screenshots
+                .then_some(Folder::Screenshots)
+                .into_iter()
+                .chain(settings.watched_folders.iter().cloned().map(Folder::Path))
+                .collect()
+        };
+        let mut watcher = ivars.folders.borrow_mut();
+        watcher.take();
+        if !folders.is_empty() {
             let shelf = Rc::clone(self.shelf());
-            *watcher = Some(ScreenshotWatcher::start(move |paths| {
+            *watcher = Some(FolderWatcher::start(folders, move |paths| {
                 let response = commands::handle(&shelf, Request::add_paths(paths));
                 if !response.ok {
                     eprintln!("yoinks: {}", response.error.unwrap_or_default());
@@ -545,4 +691,24 @@ fn on_gesture(shelf: &Shelf, gesture: Gesture) {
         shelf.appear_at_edge();
         shelf.arm_auto_hide(HIDE_AFTER_ADD);
     }
+}
+
+/// Asks before deleting a shelf that has items on it.
+fn confirm_delete(mtm: MainThreadMarker, name: &str, count: usize) -> bool {
+    let alert = objc2_app_kit::NSAlert::new(mtm);
+    alert.setMessageText(&NSString::from_str(&format!(
+        "Delete the shelf \"{name}\"?"
+    )));
+    let items = if count == 1 {
+        "1 item".to_owned()
+    } else {
+        format!("{count} items")
+    };
+    alert.setInformativeText(&NSString::from_str(&format!(
+        "Its {items} will be removed. Files you added from Finder stay where they are."
+    )));
+    alert.addButtonWithTitle(ns_string!("Delete"));
+    alert.addButtonWithTitle(ns_string!("Cancel"));
+    crate::ui::activate_app(mtm);
+    alert.runModal() == objc2_app_kit::NSAlertFirstButtonReturn
 }

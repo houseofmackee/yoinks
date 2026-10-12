@@ -1,7 +1,7 @@
 //! One shelf entry: icon or thumbnail, title, stack badge. Tiles are drag
 //! sources and handle clicks, selection and their context menu.
 
-use std::cell::{Cell, OnceCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::path::Path;
 use std::rc::Weak;
 
@@ -11,8 +11,8 @@ use objc2::{AnyThread, DefinedClass, MainThreadOnly, Message, define_class, msg_
 use objc2_app_kit::{
     NSColor, NSDragOperation, NSDraggingContext, NSDraggingItem, NSDraggingSession,
     NSDraggingSource, NSEvent, NSFont, NSImage, NSImageScaling, NSImageView, NSLayoutAttribute,
-    NSLayoutConstraint, NSMenu, NSMenuItem, NSResponder, NSStackView, NSTextAlignment, NSTextField,
-    NSUserInterfaceLayoutOrientation, NSView, NSWorkspace,
+    NSLayoutConstraint, NSMenu, NSMenuItem, NSResponder, NSSharingService, NSStackView,
+    NSTextAlignment, NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSWorkspace,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSFileManager, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize,
@@ -40,6 +40,8 @@ pub struct TileIvars {
     /// Set while the mouse is down and a drag was attempted, so one press
     /// starts at most one drag session.
     dragging: Cell<bool>,
+    /// What the Share submenu shares, set when the context menu is built.
+    share_items: RefCell<Vec<Retained<AnyObject>>>,
 }
 
 define_class!(
@@ -184,6 +186,22 @@ define_class!(
             });
         }
 
+        #[unsafe(method(shareItem:))]
+        fn share_item(&self, sender: Option<&NSMenuItem>) {
+            let service = sender
+                .and_then(|item| item.representedObject())
+                .and_then(|object| object.downcast::<NSSharingService>().ok());
+            let items = self.ivars().share_items.borrow().clone();
+            if let Some(service) = service
+                && !items.is_empty()
+            {
+                // The service's window (AirDrop, Mail, ...) needs the app in front.
+                crate::ui::activate_app(self.mtm());
+                // SAFETY: Strings and URLs, which the services accept.
+                unsafe { service.performWithItems(&NSArray::from_retained_slice(&items)) };
+            }
+        }
+
         #[unsafe(method(copyItemText:))]
         fn copy_item_text(&self, _sender: Option<&AnyObject>) {
             self.with_model(|model, id| model.copy_text(id));
@@ -263,6 +281,7 @@ impl TileView {
             model,
             icon: OnceCell::new(),
             dragging: Cell::new(false),
+            share_items: RefCell::default(),
         });
         // SAFETY: NSView's `init` calls the designated `initWithFrame:`.
         let this: Retained<Self> = unsafe { msg_send![super(this), init] };
@@ -476,6 +495,12 @@ impl TileView {
             menu.addItem(&submenu_item(mtm, "Open With", &open_with));
         }
         menu.addItem(&item("Reveal in Finder", sel!(revealItem:), ""));
+        if let Some(share) = self.share_menu(model.as_deref()) {
+            let parent = NSMenuItem::new(mtm);
+            parent.setTitle(ns_string!("Share"));
+            parent.setSubmenu(Some(&share));
+            menu.addItem(&parent);
+        }
         menu.addItem(&NSMenuItem::separatorItem(mtm));
 
         menu.addItem(&item("Copy", sel!(copyItem:), "c"));
@@ -525,6 +550,43 @@ impl TileView {
         menu.addItem(&NSMenuItem::separatorItem(mtm));
         menu.addItem(&item("Remove", sel!(removeItem:), ""));
         menu
+    }
+
+    /// Share ▸ the services that can share the entry: AirDrop, Mail,
+    /// Messages, Notes and others (like Finder's Share menu). The ready-made
+    /// share picker needs an active app to show its popover, which Yoinks
+    /// never is, so the services are listed directly.
+    #[allow(deprecated)]
+    fn share_menu(&self, model: Option<&ShelfModel>) -> Option<Retained<NSMenu>> {
+        let mtm = self.mtm();
+        let items = model?.share_items(self.ivars().entry_id);
+        if items.is_empty() {
+            return None;
+        }
+        let array = NSArray::from_retained_slice(&items);
+        // SAFETY: Strings and URLs, which the services accept.
+        let services = unsafe { NSSharingService::sharingServicesForItems(&array) };
+        if services.is_empty() {
+            return None;
+        }
+        let menu = NSMenu::new(mtm);
+        for service in services.iter() {
+            let entry = menu_item(
+                mtm,
+                &service.title().to_string(),
+                sel!(shareItem:),
+                "",
+                Some(self.as_ref()),
+            );
+            let image = service.image();
+            image.setSize(NSSize::new(16.0, 16.0));
+            entry.setImage(Some(&image));
+            // SAFETY: An NSSharingService is a valid represented object.
+            unsafe { entry.setRepresentedObject(Some(&service)) };
+            menu.addItem(&entry);
+        }
+        *self.ivars().share_items.borrow_mut() = items;
+        Some(menu)
     }
 
     /// Apps that can open the first item, the default one first.

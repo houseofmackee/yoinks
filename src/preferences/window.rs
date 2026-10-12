@@ -31,10 +31,11 @@ const HEIGHT: f64 = 470.0;
 const NOTE_WIDTH: f64 = 300.0;
 
 const EDGES: [(ShelfEdge, &str); 2] = [(ShelfEdge::Left, "Left"), (ShelfEdge::Right, "Right")];
-const APPEAR_MODES: [(AppearMode, &str); 4] = [
+const APPEAR_MODES: [(AppearMode, &str); 5] = [
     (AppearMode::AtEdge, "At the screen edge"),
     (AppearMode::NearEdge, "When the cursor nears the edge"),
     (AppearMode::AtCursor, "Next to the cursor"),
+    (AppearMode::OnShake, "When you shake the pointer"),
     (AppearMode::Off, "Never"),
 ];
 const HISTORY_SIZES: [usize; 5] = [25, 50, 100, 200, 500];
@@ -155,6 +156,12 @@ define_class!(
         fn screenshots_changed(&self, sender: &NSButton) {
             let on = sender.state() == NSControlStateValueOn;
             self.update(|s| s.add_screenshots = on);
+        }
+
+        #[unsafe(method(tintChanged:))]
+        fn tint_changed(&self, sender: &NSButton) {
+            let on = sender.state() == NSControlStateValueOn;
+            self.update(|s| s.tint_shelf = on);
         }
 
         #[unsafe(method(energyChanged:))]
@@ -631,6 +638,22 @@ impl PreferencesWindow {
                 .position(|(h, _)| *h == settings.shelf_expiry_hours)
                 .unwrap_or(0) as isize,
         );
+        let tint = form::checkbox(
+            mtm,
+            "Tint the shelf with its color",
+            target,
+            sel!(tintChanged:),
+        );
+        tint.setState(if settings.tint_shelf {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
+        let tint_note = note(
+            mtm,
+            "Give a shelf a color in the menu: Shelves > Color.",
+            NOTE_WIDTH,
+        );
         let screenshots = form::checkbox(
             mtm,
             "Add new screenshots to the shelf",
@@ -650,6 +673,30 @@ impl PreferencesWindow {
         );
 
         let weak = Weak::new(self);
+        let folders = AppList::folders(
+            mtm,
+            settings
+                .watched_folders
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+            move |paths| {
+                if let Some(this) = weak.load() {
+                    this.update(|s| {
+                        s.watched_folders = paths.into_iter().map(PathBuf::from).collect()
+                    });
+                }
+            },
+        );
+        let folders_view = folders.view(NOTE_WIDTH, 72.0);
+        let folders_note = note(
+            mtm,
+            "New files and folders appear on the shelf once they have finished copying \
+             or downloading, for example your Downloads folder.",
+            NOTE_WIDTH,
+        );
+
+        let weak = Weak::new(self);
         let apps = AppList::new(mtm, settings.ignored_apps.clone(), move |ids| {
             if let Some(this) = weak.load() {
                 this.update(|s| s.ignored_apps = ids);
@@ -664,8 +711,12 @@ impl PreferencesWindow {
             up(&*indented(mtm, &hide_note)),
             up(&*row(mtm, "After dragging out:", &keep)),
             up(&*row(mtm, "Remove unpinned items:", &expiry)),
+            up(&*row(mtm, "Color:", &tint)),
+            up(&*indented(mtm, &tint_note)),
             up(&*row(mtm, "Screenshots:", &screenshots)),
             up(&*indented(mtm, &screenshots_note)),
+            up(&*row(mtm, "Watch folders:", &folders_view)),
+            up(&*indented(mtm, &folders_note)),
             up(&*row(mtm, "Don't show it for drags from:", &apps_view)),
             up(&*indented(
                 mtm,
@@ -676,6 +727,7 @@ impl PreferencesWindow {
                 ),
             )),
         ];
+        self.ivars().lists.borrow_mut().push(folders);
         self.ivars().lists.borrow_mut().push(apps);
         up(&*column(mtm, &refs(&rows)))
     }

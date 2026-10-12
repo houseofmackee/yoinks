@@ -9,8 +9,9 @@ use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_app_kit::{NSEvent, NSEventMask, NSPasteboard, NSPasteboardNameDrag, NSWorkspace};
-use objc2_foundation::NSTimer;
+use objc2_foundation::{NSProcessInfo, NSTimer};
 
+use super::shake::ShakeDetector;
 use super::tracker::{DragTracker, Update};
 use crate::settings::{AppearMode, Settings};
 use crate::shelf::Shelf;
@@ -40,6 +41,7 @@ pub struct DragMonitor {
     settings: RefCell<Settings>,
     drag_pasteboard: Retained<NSPasteboard>,
     tracker: RefCell<DragTracker>,
+    shake: RefCell<ShakeDetector>,
     session: Cell<Option<Session>>,
     release_timer: RefCell<Option<Retained<NSTimer>>>,
     /// Keeps the global event monitors installed.
@@ -57,6 +59,7 @@ impl DragMonitor {
             settings: RefCell::new(settings.clone()),
             drag_pasteboard,
             tracker: RefCell::default(),
+            shake: RefCell::default(),
             session: Cell::new(None),
             release_timer: RefCell::new(None),
             _monitors: RefCell::default(),
@@ -121,6 +124,7 @@ impl DragMonitor {
             shown: false,
             revision: self.shelf.model().revision(),
         }));
+        self.shake.borrow_mut().reset();
         self.watch_for_release();
         self.drag_moved();
     }
@@ -137,6 +141,15 @@ impl DragMonitor {
             AppearMode::Off => return,
             AppearMode::AtEdge => self.shelf.appear_at_edge(),
             AppearMode::AtCursor => self.shelf.appear_at_cursor(),
+            AppearMode::OnShake => {
+                // Seconds, for timing the turns.
+                let time = NSProcessInfo::processInfo().systemUptime();
+                let x = NSEvent::mouseLocation().x;
+                if !self.shake.borrow_mut().moved(x, time) {
+                    return;
+                }
+                self.shelf.appear_at_cursor();
+            }
             AppearMode::NearEdge => {
                 let near = self.shelf.screen_under_cursor().is_some_and(|screen| {
                     near_edge(screen, NSEvent::mouseLocation(), self.shelf.edge())

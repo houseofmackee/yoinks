@@ -59,9 +59,11 @@ src/
     prompt.rs        non-activating Rename prompt
     ocr.rs           Vision text recognition for Copy Text
     search.rs        matching entries against a shelf search
+    shelves.rs       named shelves, color tags, shelves.json
   drag/
     monitor.rs       shows/hides the shelf for system-wide drags
     tracker.rs       pure drag recognition state machine
+    shake.rs         pure shake-to-show detection
   clipboard/
     watcher.rs       NSPasteboard changeCount polling, recording, copy back
     history.rs       pure model: dedupe, pins, limit, search, persistence
@@ -72,7 +74,7 @@ src/
     shortcut.rs      parse "control+option+Y" into Carbon key code + modifiers
     gesture.rs       pure press / long press / double press state machine
     carbon.rs        RegisterEventHotKey registration and dispatch
-  screenshots.rs     watches the screenshot folder for new captures
+  folders.rs         watches the screenshot folder and watched folders
   power.rs           energy saving on battery or in Low Power Mode
   updates.rs         Sparkle, loaded at runtime from release bundles
   settings.rs        typed settings with serde defaults (settings.json)
@@ -408,17 +410,19 @@ Key design points:
 
 | Idea | Description | Status |
 | --- | --- | --- |
-| Multiple named shelves | Switch between shelves (for example "Invoices", "Design assets"), each persisted separately | To do |
+| Multiple named shelves | Switch between shelves (for example "Invoices", "Design assets"), each persisted separately | Done: Shelves menu, ⌘1 to ⌘9, Finder-style color tags with an optional background tint; `shelves.json` plus one file per shelf |
 | Pinned items | Pin shelf items so they stay after being dragged out | Done: pin badge, kept after drag out and Clear Shelf |
 | Search and filter | Type to filter shelf and clipboard history by name, kind or content | Done: typing on the shelf or ⌘F filters it by name, link, kind and text contents |
 | Quick actions on items | Right-click: rename, compress to zip, convert image format, resize image, copy path, open with | Done (rename is for items Yoinks saved; results are new items) |
 | Text snippet editing | Edit a text clipping inline before dragging it out | To do |
 | Auto-expiry | Optionally remove items older than N hours/days | Done: Preferences > General, 1 hour to 30 days; pinned items stay |
 | OCR on images | Use the Vision framework to copy text out of an image or screenshot | Done: right-click > Copy Text |
-| Screenshot capture | Optionally watch the screenshot folder and add new screenshots automatically | Done: Preferences > General; uses the `kMDItemIsScreenCapture` marker, so other files in the folder are ignored |
+| Screenshot capture | Optionally watch the screenshot folder and add new screenshots automatically | Done: Preferences > Shelf; uses the `kMDItemIsScreenCapture` marker, so other files in the folder are ignored. Watched folders (any folder, new files once settled) build on it |
 | Keyboard-only workflow | Arrow keys to select, Return to open, ⌘C to copy, Delete to remove, ⌘V to paste into the shelf | Done |
 | Paste to shelf | ⌘V while the shelf is focused adds the clipboard contents | Done |
 | Open source CLI + scripting | First-class CLI and JSON output for scripting (`yoinks list --json`) | Done (Phase 9a) |
+| Share menu | Send items with AirDrop, Mail, Messages and other share services | Done: right-click > Share (services listed directly; the share picker popover needs an active app) |
+| Shake to show | Shake the pointer mid-drag to bring up the shelf (as in Dropover) | Done: a choice under "Show the shelf during drags" |
 | Sensitive content redaction | Detect and skip likely secrets (API keys, tokens) in clipboard history | Done: known key formats, private keys, credential lines and random tokens are skipped (Preferences > Clipboard) |
 | Low-resource mode | Disable thumbnails and polling on battery power | Done: "Save energy on battery" (Preferences > General) slows clipboard and screenshot polling and skips new thumbnails on battery or in Low Power Mode |
 
@@ -460,7 +464,6 @@ Key design points:
 ## 9. What's left (as of v0.4.0, 2026-10-12)
 
 **Features (section 5)**
-- Multiple named shelves, each persisted separately, with a switcher.
 - Text snippet editing: edit a text clipping in place before dragging it
   out.
 
