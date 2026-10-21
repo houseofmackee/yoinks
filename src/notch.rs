@@ -28,6 +28,12 @@ use crate::shelf::geometry::notch_rect;
 /// Adds what was dropped; false if nothing could be used.
 type OnDrop = Box<dyn Fn(&NSPasteboard) -> bool>;
 
+/// On every desktop (Space), above full-screen apps, out of Cmd-backtick.
+const NOTCH_SPACES: NSWindowCollectionBehavior = NSWindowCollectionBehavior::CanJoinAllSpaces
+    .union(NSWindowCollectionBehavior::Stationary)
+    .union(NSWindowCollectionBehavior::FullScreenAuxiliary)
+    .union(NSWindowCollectionBehavior::IgnoresCycle);
+
 /// The pill's size below the notch while a drag hovers.
 const PILL_HEIGHT: f64 = 44.0;
 const PILL_MIN_WIDTH: f64 = 230.0;
@@ -145,6 +151,8 @@ pub struct NotchTarget {
     enabled: Cell<bool>,
     /// Keeps the screen change observer registered.
     observer: RefCell<Option<Retained<ProtocolObject<dyn NSObjectProtocol>>>>,
+    /// Keeps the panel on the desktop the user switches to.
+    space_observer: RefCell<Option<Retained<ProtocolObject<dyn NSObjectProtocol>>>>,
 }
 
 impl NotchTarget {
@@ -173,12 +181,7 @@ impl NotchTarget {
         panel.setHasShadow(false);
         // Above the menu bar, on every Space and over full-screen apps.
         panel.setLevel(objc2_app_kit::NSMainMenuWindowLevel + 2);
-        panel.setCollectionBehavior(
-            NSWindowCollectionBehavior::CanJoinAllSpaces
-                | NSWindowCollectionBehavior::Stationary
-                | NSWindowCollectionBehavior::FullScreenAuxiliary
-                | NSWindowCollectionBehavior::IgnoresCycle,
-        );
+        panel.setCollectionBehavior(NOTCH_SPACES);
         panel.setHidesOnDeactivate(false);
         panel.setContentView(Some(&view));
         let this = Rc::new(Self {
@@ -186,6 +189,7 @@ impl NotchTarget {
             view,
             enabled: Cell::new(true),
             observer: RefCell::new(None),
+            space_observer: RefCell::new(None),
         });
         let weak: Weak<Self> = Rc::downgrade(&this);
         let block = RcBlock::new(move |_notification: NonNull<NSNotification>| {
@@ -204,6 +208,13 @@ impl NotchTarget {
             )
         };
         *this.observer.borrow_mut() = Some(observer);
+        let weak: Weak<Self> = Rc::downgrade(&this);
+        let space_observer = crate::ui::on_space_change(move || {
+            if let Some(target) = weak.upgrade() {
+                crate::ui::ensure_on_active_space(&target.panel, NOTCH_SPACES);
+            }
+        });
+        *this.space_observer.borrow_mut() = Some(space_observer);
         this.place();
         this
     }
@@ -231,6 +242,7 @@ impl NotchTarget {
                 ));
                 self.panel.setFrame_display(frame, true);
                 self.panel.orderFrontRegardless();
+                crate::ui::ensure_on_active_space(&self.panel, NOTCH_SPACES);
             }
             None => self.panel.orderOut(None),
         }
@@ -244,6 +256,14 @@ impl Drop for NotchTarget {
             // SAFETY: Removing the observer we added.
             unsafe {
                 NSNotificationCenter::defaultCenter().removeObserver(observer.as_ref());
+            }
+        }
+        if let Some(observer) = self.space_observer.take() {
+            // SAFETY: Removing the observer we added to the workspace's center.
+            unsafe {
+                objc2_app_kit::NSWorkspace::sharedWorkspace()
+                    .notificationCenter()
+                    .removeObserver(observer.as_ref());
             }
         }
     }

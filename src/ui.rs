@@ -115,3 +115,46 @@ pub fn follow_active_space(window: &objc2_app_kit::NSWindow) {
             | NSWindowCollectionBehavior::FullScreenAuxiliary,
     );
 }
+
+/// Brings a window meant to be on every desktop (`behavior` includes
+/// `CanJoinAllSpaces`) to the one the user is on, if it isn't there: macOS
+/// can leave such a window tied to one desktop. It is moved here, then set
+/// back to `behavior`, so it follows from now on.
+pub fn ensure_on_active_space(
+    window: &objc2_app_kit::NSWindow,
+    behavior: objc2_app_kit::NSWindowCollectionBehavior,
+) {
+    use objc2_app_kit::NSWindowCollectionBehavior;
+    if !window.isVisible() || window.isOnActiveSpace() {
+        return;
+    }
+    window.setCollectionBehavior(
+        NSWindowCollectionBehavior::MoveToActiveSpace
+            | NSWindowCollectionBehavior::FullScreenAuxiliary
+            | NSWindowCollectionBehavior::IgnoresCycle,
+    );
+    window.orderFrontRegardless();
+    window.setCollectionBehavior(behavior);
+}
+
+/// Calls `f` whenever the user switches to another desktop. Keep the
+/// returned observer to keep receiving them.
+pub fn on_space_change(
+    f: impl Fn() + 'static,
+) -> objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_foundation::NSObjectProtocol>> {
+    use block2::RcBlock;
+    use objc2_app_kit::{NSWorkspace, NSWorkspaceActiveSpaceDidChangeNotification};
+    let block = RcBlock::new(move |_note: std::ptr::NonNull<objc2_foundation::NSNotification>| f());
+    // SAFETY: Workspace notifications are posted on the main thread; the
+    // block only touches main-thread state.
+    unsafe {
+        NSWorkspace::sharedWorkspace()
+            .notificationCenter()
+            .addObserverForName_object_queue_usingBlock(
+                Some(NSWorkspaceActiveSpaceDidChangeNotification),
+                None,
+                None,
+                &block,
+            )
+    }
+}

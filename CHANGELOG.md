@@ -7,6 +7,12 @@ shown in the update window and on its GitHub release.
 
 ## [Unreleased]
 
+### Fixed
+
+- The shelf could get stuck on one desktop and only open there. It now
+  always opens on the desktop you are on, and an open shelf comes along
+  when you switch desktops (the notch drop target too).
+
 ## [0.6.1] (2026-10-12)
 
 ### Changed

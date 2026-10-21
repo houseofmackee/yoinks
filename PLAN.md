@@ -386,6 +386,15 @@ Key design points:
   preferences tab. The first real update over GitHub: the installed 0.3.0
   offered 0.4.0 with its changelog notes, then downloaded, verified,
   installed and relaunched it; the result is still notarized.
+- [x] Shelf stuck on one desktop (2026-10-21): the shelf could end up tied
+  to the desktop where it was once opened, despite `CanJoinAllSpaces`. Not
+  reproducible from a fresh launch, so the shelf and the notch panel now
+  repair it: on showing, and on every desktop switch
+  (`NSWorkspaceActiveSpaceDidChangeNotification`), a visible window that
+  is not on the active desktop is moved there (`MoveToActiveSpace`) and
+  set back to all desktops (`ui::ensure_on_active_space`). Checked with a
+  build whose shelf starts tied to one desktop: without the repair it
+  stays behind, with it it follows.
 - [x] v0.6.1 (2026-10-12): the shorter Preferences (new Adding tab) and
   windows that open on the current desktop. Installed through Sparkle;
   the cask followed.

@@ -7,14 +7,14 @@ use std::time::{Duration, Instant};
 
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAnimatablePropertyContainer, NSAnimationContext, NSApplication, NSBackingStoreType, NSColor,
     NSEvent, NSFloatingWindowLevel, NSPanel, NSScreen, NSWindow, NSWindowAnimationBehavior,
     NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
 };
-use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize, NSTimer};
+use objc2_foundation::{MainThreadMarker, NSObjectProtocol, NSPoint, NSRect, NSSize, NSTimer};
 
 use super::geometry::{
     ShelfEdge, ShelfFrames, cursor_frames, custom_frames, screen_containing, shelf_frames,
@@ -82,12 +82,7 @@ impl ShelfPanel {
         panel.setFloatingPanel(true);
         panel.setLevel(NSFloatingWindowLevel);
         // Visible on every Space and on top of full-screen apps.
-        panel.setCollectionBehavior(
-            NSWindowCollectionBehavior::CanJoinAllSpaces
-                | NSWindowCollectionBehavior::FullScreenAuxiliary
-                | NSWindowCollectionBehavior::Stationary
-                | NSWindowCollectionBehavior::IgnoresCycle,
-        );
+        panel.setCollectionBehavior(SHELF_SPACES);
         // Panels hide when their app deactivates by default; ours is an
         // accessory app that is rarely active.
         panel.setHidesOnDeactivate(false);
@@ -100,6 +95,12 @@ impl ShelfPanel {
         panel
     }
 }
+
+/// The shelf is on every desktop (Space) and over full-screen apps.
+const SHELF_SPACES: NSWindowCollectionBehavior = NSWindowCollectionBehavior::CanJoinAllSpaces
+    .union(NSWindowCollectionBehavior::FullScreenAuxiliary)
+    .union(NSWindowCollectionBehavior::Stationary)
+    .union(NSWindowCollectionBehavior::IgnoresCycle);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Visibility {
@@ -130,6 +131,8 @@ pub struct Shelf {
     /// Frames for the screen the shelf was last shown on, so it hides back
     /// toward the same edge even if the cursor moved to another display.
     frames: Cell<Option<ShelfFrames>>,
+    /// Keeps the open shelf on the desktop the user switches to.
+    space_observer: RefCell<Option<Retained<ProtocolObject<dyn NSObjectProtocol>>>>,
 }
 
 impl Shelf {
@@ -152,6 +155,7 @@ impl Shelf {
             outside_since: Cell::new(None),
             visibility: Rc::new(Cell::new(Visibility::Hidden)),
             frames: Cell::new(None),
+            space_observer: RefCell::new(None),
         });
         let weak = Rc::downgrade(&shelf);
         shelf.model.view().set_on_event(move |event| {
@@ -159,7 +163,22 @@ impl Shelf {
                 shelf.view_event(event);
             }
         });
+        let weak = Rc::downgrade(&shelf);
+        let observer = crate::ui::on_space_change(move || {
+            if let Some(shelf) = weak.upgrade() {
+                shelf.follow_active_space();
+            }
+        });
+        *shelf.space_observer.borrow_mut() = Some(observer);
         shelf
+    }
+
+    /// An open shelf comes along to the desktop the user is on, even if
+    /// macOS had tied it to another one.
+    fn follow_active_space(&self) {
+        if self.visibility.get() != Visibility::Hidden {
+            crate::ui::ensure_on_active_space(&self.panel, SHELF_SPACES);
+        }
     }
 
     pub fn set_hide_after_use(&self, enabled: bool) {
@@ -382,7 +401,8 @@ impl Shelf {
             self.panel.makeKeyWindow();
         }
         match self.visibility.get() {
-            Visibility::Shown => {}
+            // Already open, perhaps on another desktop: bring it here.
+            Visibility::Shown => self.follow_active_space(),
             Visibility::Hiding => {
                 // Reverse the running hide animation in place.
                 if let Some(frames) = self.frames.get() {
@@ -405,6 +425,7 @@ impl Shelf {
                 self.panel.setFrame_display(start, false);
                 self.panel.setAlphaValue(0.0);
                 self.panel.orderFrontRegardless();
+                self.follow_active_space();
                 if focus {
                     self.panel.makeKeyWindow();
                 }
