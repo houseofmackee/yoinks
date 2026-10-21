@@ -7,6 +7,8 @@ shown in the update window and on its GitHub release.
 
 ## [Unreleased]
 
+## [0.6.2] (2026-10-21)
+
 ### Fixed
 
 - The shelf could get stuck on one desktop and only open there. It now
