@@ -386,6 +386,17 @@ Key design points:
   preferences tab. The first real update over GitHub: the installed 0.3.0
   offered 0.4.0 with its changelog notes, then downloaded, verified,
   installed and relaunched it; the result is still notarized.
+- [x] Shelf stuck on one desktop, second fix (2026-11-01): 0.6.2's
+  repair relied on `isOnActiveSpace`, which stays true for a
+  `CanJoinAllSpaces` window even when the window server has it stuck on
+  another desktop (seen live in the installed 0.6.2: the shelf window was
+  open, opaque and not on screen). The check now asks the window server
+  (`CGWindowListCopyWindowInfo`, `kCGWindowIsOnscreen`); if re-applying
+  the behavior doesn't help, the shelf's contents move into a fresh
+  window. Likely cause: the window was created at login before the Dock
+  had set up desktops (the stuck window had a very low number); not
+  reproducible later. Simulated with a build whose shelf starts stuck: it
+  follows with both repair paths; a healthy shelf is never replaced.
 - [x] Shelf stuck on one desktop (2026-10-21): the shelf could end up tied
   to the desktop where it was once opened, despite `CanJoinAllSpaces`. Not
   reproducible from a fresh launch, so the shelf and the notch panel now

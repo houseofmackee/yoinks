@@ -7,6 +7,13 @@ shown in the update window and on its GitHub release.
 
 ## [Unreleased]
 
+### Fixed
+
+- The shelf could still open on another desktop than the one you are on
+  (0.6.2 did not catch it). Yoinks now asks macOS whether the shelf is
+  really on screen, and if it is stuck elsewhere, opens it in a fresh
+  window on the current desktop.
+
 ## [0.6.2] (2026-10-21)
 
 ### Fixed

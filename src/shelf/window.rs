@@ -96,6 +96,9 @@ impl ShelfPanel {
     }
 }
 
+/// Seconds to wait after a desktop switch before checking the shelf.
+const SPACE_SETTLE: f64 = 0.3;
+
 /// The shelf is on every desktop (Space) and over full-screen apps.
 const SHELF_SPACES: NSWindowCollectionBehavior = NSWindowCollectionBehavior::CanJoinAllSpaces
     .union(NSWindowCollectionBehavior::FullScreenAuxiliary)
@@ -114,7 +117,8 @@ enum Visibility {
 /// animations.
 pub struct Shelf {
     this: Weak<Shelf>,
-    panel: Retained<ShelfPanel>,
+    /// Replaced by a fresh one if macOS leaves it stuck on another desktop.
+    panel: RefCell<Retained<ShelfPanel>>,
     model: Rc<ShelfModel>,
     edge: Cell<ShelfEdge>,
     /// Where the user dragged the shelf (bottom-left corner), if anywhere.
@@ -144,7 +148,7 @@ impl Shelf {
         panel.makeFirstResponder(Some(model.view()));
         let shelf = Rc::new_cyclic(|this: &Weak<Self>| Self {
             this: this.clone(),
-            panel,
+            panel: RefCell::new(panel),
             model,
             edge: Cell::new(edge),
             custom_origin: Cell::new(None),
@@ -165,20 +169,56 @@ impl Shelf {
         });
         let weak = Rc::downgrade(&shelf);
         let observer = crate::ui::on_space_change(move || {
-            if let Some(shelf) = weak.upgrade() {
-                shelf.follow_active_space();
-            }
+            // Check once the switch has settled in the window server.
+            let weak = weak.clone();
+            let block = RcBlock::new(move |_timer: NonNull<NSTimer>| {
+                if let Some(shelf) = weak.upgrade() {
+                    shelf.follow_active_space();
+                }
+            });
+            // SAFETY: Main run loop; the block only touches main-thread state.
+            let _ = unsafe {
+                NSTimer::scheduledTimerWithTimeInterval_repeats_block(SPACE_SETTLE, false, &block)
+            };
         });
         *shelf.space_observer.borrow_mut() = Some(observer);
         shelf
     }
 
+    /// The shelf's window.
+    fn panel(&self) -> Retained<ShelfPanel> {
+        self.panel.borrow().clone()
+    }
+
     /// An open shelf comes along to the desktop the user is on, even if
-    /// macOS had tied it to another one.
+    /// macOS had tied its window to another one; as a last resort the
+    /// window is replaced by a fresh one, which opens here.
     fn follow_active_space(&self) {
-        if self.visibility.get() != Visibility::Hidden {
-            crate::ui::ensure_on_active_space(&self.panel, SHELF_SPACES);
+        if self.visibility.get() == Visibility::Hidden {
+            return;
         }
+        if !crate::ui::ensure_on_active_space(&self.panel(), SHELF_SPACES) {
+            eprintln!("yoinks: the shelf was stuck on another desktop; replacing its window");
+            self.replace_panel();
+        }
+    }
+
+    /// Moves the shelf's contents into a new window in the same place.
+    fn replace_panel(&self) {
+        let old = self.panel();
+        let fresh = ShelfPanel::new(old.mtm());
+        let key = old.isKeyWindow();
+        old.setContentView(None);
+        fresh.setContentView(Some(self.model.view()));
+        fresh.setFrame_display(old.frame(), false);
+        fresh.setAlphaValue(old.alphaValue());
+        old.orderOut(None);
+        fresh.orderFrontRegardless();
+        fresh.makeFirstResponder(Some(self.model.view()));
+        if key {
+            fresh.makeKeyWindow();
+        }
+        *self.panel.borrow_mut() = fresh;
     }
 
     pub fn set_hide_after_use(&self, enabled: bool) {
@@ -287,7 +327,7 @@ impl Shelf {
             ViewEvent::Changed => {}
             ViewEvent::Moved(origin) => {
                 self.custom_origin.set(Some(origin));
-                let frame = self.panel.frame();
+                let frame = self.panel().frame();
                 self.frames.set(Some(ShelfFrames {
                     shown: frame,
                     hidden: frame,
@@ -329,7 +369,7 @@ impl Shelf {
     /// True while the shelf is on screen and the cursor is over it.
     pub fn contains_mouse(&self) -> bool {
         self.visibility.get() != Visibility::Hidden
-            && screen_containing(&[self.panel.frame()], NSEvent::mouseLocation()).is_some()
+            && screen_containing(&[self.panel().frame()], NSEvent::mouseLocation()).is_some()
     }
 
     /// The full frame of the screen under the cursor.
@@ -380,7 +420,7 @@ impl Shelf {
     /// a connected screen; otherwise at the edge of the screen under the
     /// cursor.
     fn edge_or_custom_frames(&self) -> Option<ShelfFrames> {
-        let mtm = self.panel.mtm();
+        let mtm = self.panel().mtm();
         if let Some(origin) = self.custom_origin.get() {
             let screens = NSScreen::screens(mtm);
             let rects: Vec<NSRect> = screens.iter().map(|screen| screen.frame()).collect();
@@ -398,7 +438,7 @@ impl Shelf {
     /// also becomes key (it never activates the app).
     fn present(&self, layout: impl FnOnce() -> Option<ShelfFrames>, focus: bool) {
         if focus {
-            self.panel.makeKeyWindow();
+            self.panel().makeKeyWindow();
         }
         match self.visibility.get() {
             // Already open, perhaps on another desktop: bring it here.
@@ -422,12 +462,12 @@ impl Shelf {
                 } else {
                     frames.hidden
                 };
-                self.panel.setFrame_display(start, false);
-                self.panel.setAlphaValue(0.0);
-                self.panel.orderFrontRegardless();
+                self.panel().setFrame_display(start, false);
+                self.panel().setAlphaValue(0.0);
+                self.panel().orderFrontRegardless();
                 self.follow_active_space();
                 if focus {
-                    self.panel.makeKeyWindow();
+                    self.panel().makeKeyWindow();
                 }
                 self.animate(frames.shown, 1.0, None);
             }
@@ -445,9 +485,9 @@ impl Shelf {
 
         let target = match self.frames.get() {
             Some(frames) if !reduce_motion() => frames.hidden,
-            _ => self.panel.frame(),
+            _ => self.panel().frame(),
         };
-        let panel = self.panel.clone();
+        let panel = self.panel();
         let visibility = Rc::clone(&self.visibility);
         let completion = RcBlock::new(move || {
             // A `show()` during the animation flips the state back to Shown;
@@ -461,7 +501,8 @@ impl Shelf {
     }
 
     fn animate(&self, frame: NSRect, alpha: f64, completion: Option<RcBlock<dyn Fn()>>) {
-        let window: &NSWindow = &self.panel;
+        let panel = self.panel();
+        let window: &NSWindow = &panel;
         let animator = window.animator();
         let duration = if reduce_motion() {
             FADE_DURATION
@@ -479,7 +520,7 @@ impl Shelf {
 
     /// The screen under the mouse, falling back to the main screen.
     fn active_screen(&self) -> Option<Retained<NSScreen>> {
-        let mtm = self.panel.mtm();
+        let mtm = self.panel().mtm();
         let screens = NSScreen::screens(mtm);
         let rects: Vec<NSRect> = screens.iter().map(|screen| screen.frame()).collect();
         match screen_containing(&rects, NSEvent::mouseLocation()) {

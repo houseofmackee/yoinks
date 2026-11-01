@@ -117,16 +117,25 @@ pub fn follow_active_space(window: &objc2_app_kit::NSWindow) {
 }
 
 /// Brings a window meant to be on every desktop (`behavior` includes
-/// `CanJoinAllSpaces`) to the one the user is on, if it isn't there: macOS
-/// can leave such a window tied to one desktop. It is moved here, then set
-/// back to `behavior`, so it follows from now on.
+/// `CanJoinAllSpaces`) to the one the user is on, if it is open but not on
+/// screen: macOS can leave such a window tied to one desktop (and AppKit's
+/// `isOnActiveSpace` then still says yes, so the window server is asked).
+/// Re-applies `behavior`, then moves the window here and sets `behavior`
+/// again. Returns false if the window is still not on screen.
 pub fn ensure_on_active_space(
     window: &objc2_app_kit::NSWindow,
     behavior: objc2_app_kit::NSWindowCollectionBehavior,
-) {
+) -> bool {
     use objc2_app_kit::NSWindowCollectionBehavior;
-    if !window.isVisible() || window.isOnActiveSpace() {
-        return;
+    let on_screen = || window_on_screen(window.windowNumber()) != Some(false);
+    if !window.isVisible() || on_screen() {
+        return true;
+    }
+    window.setCollectionBehavior(NSWindowCollectionBehavior::empty());
+    window.setCollectionBehavior(behavior);
+    window.orderFrontRegardless();
+    if on_screen() {
+        return true;
     }
     window.setCollectionBehavior(
         NSWindowCollectionBehavior::MoveToActiveSpace
@@ -135,6 +144,33 @@ pub fn ensure_on_active_space(
     );
     window.orderFrontRegardless();
     window.setCollectionBehavior(behavior);
+    on_screen()
+}
+
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+    fn CGWindowListCopyWindowInfo(option: u32, relative_to: u32) -> *mut objc2::runtime::AnyObject;
+}
+
+/// Whether the window server shows window `number` on the current desktop
+/// (it may be hidden behind others); `None` if it can't tell.
+pub fn window_on_screen(number: isize) -> Option<bool> {
+    use objc2_foundation::{NSArray, NSDictionary, NSNumber, ns_string};
+    /// `kCGWindowListOptionIncludingWindow`: just that window.
+    const INCLUDING_WINDOW: u32 = 1 << 3;
+    let id = u32::try_from(number).ok().filter(|id| *id != 0)?;
+    // SAFETY: A plain query; the returned CFArray (toll-free bridged to an
+    // NSArray of dictionaries) is owned by us ("Copy" rule).
+    let info: Retained<NSArray<NSDictionary<objc2_foundation::NSString, AnyObject>>> =
+        unsafe { Retained::from_raw(CGWindowListCopyWindowInfo(INCLUDING_WINDOW, id).cast())? };
+    let window = info.firstObject()?;
+    // The key is only present for windows that are on screen.
+    Some(
+        window
+            .objectForKey(ns_string!("kCGWindowIsOnscreen"))
+            .and_then(|value| value.downcast::<NSNumber>().ok())
+            .is_some_and(|value| value.boolValue()),
+    )
 }
 
 /// Calls `f` whenever the user switches to another desktop. Keep the
@@ -156,5 +192,19 @@ pub fn on_space_change(
                 None,
                 &block,
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_on_screen_needs_a_real_window() {
+        assert_eq!(window_on_screen(0), None, "no window number");
+        assert_eq!(window_on_screen(-1), None, "not a window number");
+        // A window number that does not exist (the window server hands
+        // them out from small numbers up).
+        assert_eq!(window_on_screen(u32::MAX as isize - 1), None);
     }
 }
