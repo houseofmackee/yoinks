@@ -7,6 +7,8 @@ shown in the update window and on its GitHub release.
 
 ## [Unreleased]
 
+## [0.6.3] (2026-11-01)
+
 ### Fixed
 
 - The shelf could still open on another desktop than the one you are on
